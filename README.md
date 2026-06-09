@@ -118,6 +118,23 @@ precisa estar no ar antes dos nós de dados subirem (passo 02).
   salvou com `-o` no lugar de `-O`. Confira com `head -1 run`; se não aparecer
   `#!/usr/bin/env bash`, baixe de novo usando `-O run`.
 
+- **`Unable to establish SSL connection` no wget (mas o `ping` funciona).** O
+  `wget` do Ubuntu 16.04 usa GnuTLS antigo, que às vezes não fecha o TLS com o
+  GitHub. O `curl` (OpenSSL) costuma funcionar. Instale o curl (o `apt` usa http,
+  então funciona mesmo com o TLS quebrado) e baixe com ele:
+
+  ```
+  sudo apt-get update && sudo apt-get install -y curl ca-certificates
+  curl -fsSL https://raw.githubusercontent.com/paulo-granthon/bdd/main/run -o run
+  ```
+
+  Com o curl instalado, os próprios scripts já caem para o curl sozinhos nos
+  downloads. Alternativas: `wget --secure-protocol=TLSv1_2 <url>`, ou conferir o
+  relógio da VM (`date`; TLS depende da hora certa). Como o N2 já funcionou, dá
+  também para servir os arquivos do N2 para o N1 pela rede interna (sem TLS):
+  no N2 `python3 -m http.server 8000` (ou `python -m SimpleHTTPServer 8000`) e no
+  N1 `wget http://192.168.1.3:8000/run -O run`.
+
 - **`E: Unable to lock /var/lib/apt/...` ou `Could not get lock`.** Logo após o
   boot, o próprio Ubuntu roda atualizações (`apt-daily`/`unattended-upgrades`) e
   segura o `apt`. O passo 02 já espera o lock liberar e tenta de novo sozinho por

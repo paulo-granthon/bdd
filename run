@@ -55,7 +55,14 @@ case "${exdir}/${pre}" in
   EX03/05) nome="05_N2_verifica-replicacao.bash" ;;
 esac
 
-baixar() { wget -qO- "$1" 2>/dev/null || curl -fsSL "$1" 2>/dev/null; }
+baixar() {
+  # wget no Ubuntu 16.04 usa GnuTLS e as vezes falha o TLS com o GitHub;
+  # curl (OpenSSL) costuma funcionar. Tenta varias formas.
+  wget -qO- "$1" 2>/dev/null && return 0
+  wget -qO- --secure-protocol=TLSv1_2 "$1" 2>/dev/null && return 0
+  curl -fsSL "$1" 2>/dev/null && return 0
+  return 1
+}
 
 if [ -n "$nome" ]; then
   url="${RAW}/${exdir}/${nome}"

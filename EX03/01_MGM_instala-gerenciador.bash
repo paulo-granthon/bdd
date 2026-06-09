@@ -11,6 +11,19 @@ set -uo pipefail
 log()  { echo "[EX03/01][MGM] $*"; }
 erro() { echo "[EX03/01][MGM][ERRO] $*" >&2; exit 1; }
 
+# Baixa $1 (url) em $2 (arquivo). O wget do Ubuntu 16.04 usa GnuTLS e as vezes
+# falha o TLS com CDNs novos; por isso tenta wget, wget TLS1.2 e curl (OpenSSL).
+baixar_arquivo() {
+  wget --tries=3 -O "$2" "$1" && return 0
+  log "wget falhou (provavel TLS); tentando wget --secure-protocol=TLSv1_2..."
+  wget --tries=3 --secure-protocol=TLSv1_2 -O "$2" "$1" && return 0
+  if command -v curl >/dev/null 2>&1; then
+    log "tentando curl..."
+    curl -fSL --retry 3 -o "$2" "$1" && return 0
+  fi
+  return 1
+}
+
 VER="7.3.26"
 PKG="mysql-cluster-gpl-${VER}-linux-glibc2.12-x86_64"
 URL="https://downloads.mysql.com/archives/get/p/14/file/${PKG}.tar.gz"
@@ -25,7 +38,8 @@ else
   mkdir -p /usr/src/mysql-mgm
   cd /usr/src/mysql-mgm || erro "nao consegui entrar em /usr/src/mysql-mgm"
   if [ ! -f "${PKG}.tar.gz" ]; then
-    wget --tries=3 -O "${PKG}.tar.gz" "$URL" || erro "falha no download do MySQL Cluster"
+    baixar_arquivo "$URL" "${PKG}.tar.gz" \
+      || erro "falha no download do MySQL Cluster (TLS? rode: apt-get install -y curl ca-certificates)"
   fi
   tar -zxf "${PKG}.tar.gz" || erro "falha ao extrair o pacote"
   cp "${PKG}/bin/ndb_mgm"  /usr/bin/ || erro "falha ao copiar ndb_mgm"

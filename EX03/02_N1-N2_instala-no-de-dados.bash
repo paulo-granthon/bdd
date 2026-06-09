@@ -13,6 +13,19 @@ export DEBIAN_FRONTEND=noninteractive
 log()  { echo "[EX03/02][N1/N2] $*"; }
 erro() { echo "[EX03/02][N1/N2][ERRO] $*" >&2; exit 1; }
 
+# Baixa $1 (url) em $2 (arquivo). O wget do Ubuntu 16.04 usa GnuTLS e as vezes
+# falha o TLS com CDNs novos; por isso tenta wget, wget TLS1.2 e curl (OpenSSL).
+baixar_arquivo() {
+  wget --tries=3 -O "$2" "$1" && return 0
+  log "wget falhou (provavel TLS); tentando wget --secure-protocol=TLSv1_2..."
+  wget --tries=3 --secure-protocol=TLSv1_2 -O "$2" "$1" && return 0
+  if command -v curl >/dev/null 2>&1; then
+    log "tentando curl..."
+    curl -fSL --retry 3 -o "$2" "$1" && return 0
+  fi
+  return 1
+}
+
 # apt tolerante ao lock (apt-daily/unattended-upgrades roda no boot) e a falhas
 # transitorias de rede: espera e tenta de novo por ~2.5 min.
 apt_seguro() {
@@ -41,7 +54,8 @@ cd /usr/local || erro "nao consegui entrar em /usr/local"
 if [ ! -d "/usr/local/${PKG}" ]; then
   if [ ! -f "${PKG}.tar.gz" ]; then
     log "baixando o MySQL Cluster (arquivo grande, pode demorar)..."
-    wget --tries=3 -O "${PKG}.tar.gz" "$URL" || erro "falha no download do MySQL Cluster"
+    baixar_arquivo "$URL" "${PKG}.tar.gz" \
+      || erro "falha no download do MySQL Cluster (TLS? rode: apt-get install -y curl ca-certificates)"
   fi
   log "extraindo o pacote..."
   tar -zxf "${PKG}.tar.gz" || erro "falha ao extrair o pacote"
