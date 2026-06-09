@@ -6,15 +6,14 @@
 #   ex: bash run 3.1     -> executa EX03/01_MGM_instala-gerenciador.bash
 #       bash run 3.2     -> executa EX03/02_N1-N2_instala-no-de-dados.bash
 #
-# Funciona de duas formas:
-#   - dentro do repositorio clonado: usa o arquivo local;
-#   - baixado sozinho (via wget): descobre o nome do script no GitHub e baixa.
+# Funciona clonado (usa o arquivo local) ou sozinho (baixa o script do GitHub).
 #
-set -euo pipefail
+set -uo pipefail
 
 USUARIO="paulo-granthon"
 REPO="bdd"
 BRANCH="main"
+RAW="https://raw.githubusercontent.com/${USUARIO}/${REPO}/${BRANCH}"
 API="https://api.github.com/repos/${USUARIO}/${REPO}/contents"
 
 if [ $# -lt 1 ]; then
@@ -23,47 +22,61 @@ if [ $# -lt 1 ]; then
 fi
 
 alvo="$1"; shift
+echo "[run] alvo: ${alvo}"
+
 ex="${alvo%%.*}"
 passo="${alvo#*.}"
-if [ "$ex" = "$alvo" ] || [ -z "$passo" ]; then
-  echo "Formato invalido: '$alvo'. Use <exercicio>.<passo>, ex: 3.1" >&2
-  exit 1
-fi
+case "$ex"    in ''|*[!0-9]*) echo "[run] exercicio invalido em '${alvo}' (use ex: 3.1)" >&2; exit 1;; esac
+case "$passo" in ''|*[!0-9]*) echo "[run] passo invalido em '${alvo}' (use ex: 3.1)"     >&2; exit 1;; esac
 
-# Normaliza para os nomes do repo: EX03 / 01_...
 exdir=$(printf "EX%02d" "$((10#$ex))")
 pre=$(printf "%02d" "$((10#$passo))")
+echo "[run] procurando ${exdir}/${pre}_* ..."
 
-# 1) Tenta achar o script localmente (repo clonado).
-raiz=$(cd "$(dirname "$0")" && pwd)
+# 1) Arquivo local (repositorio clonado)?
+raiz=$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo ".")
 script=""
 for f in "${raiz}/${exdir}/${pre}_"*.bash "${raiz}/${exdir}/${pre}_"*.sh; do
-  if [ -f "$f" ]; then script="$f"; break; fi
+  [ -f "$f" ] && { script="$f"; break; }
 done
-
 if [ -n "$script" ]; then
   echo "[run] executando local: ${exdir}/$(basename "$script")"
   exec bash "$script" "$@"
 fi
 
-# 2) Sem arquivo local: descobre o nome no GitHub e baixa.
-echo "[run] arquivo local nao encontrado, procurando ${exdir}/${pre}_* no GitHub..."
+# 2) Sem arquivo local: descobre o nome. Primeiro pelo manifesto (sem rede) e,
+#    se nao conhecer o passo, cai para a API do GitHub.
+nome=""
+case "${exdir}/${pre}" in
+  EX03/01) nome="01_MGM_instala-gerenciador.bash" ;;
+  EX03/02) nome="02_N1-N2_instala-no-de-dados.bash" ;;
+  EX03/03) nome="03_MGM_verifica-cluster.bash" ;;
+  EX03/04) nome="04_N1_cria-banco-e-insere.bash" ;;
+  EX03/05) nome="05_N2_verifica-replicacao.bash" ;;
+esac
+
 baixar() { wget -qO- "$1" 2>/dev/null || curl -fsSL "$1" 2>/dev/null; }
 
-listagem=$(baixar "${API}/${exdir}?ref=${BRANCH}" || true)
-url=$(printf '%s' "$listagem" \
-  | grep -oE '"download_url": *"[^"]+"' \
-  | grep -oE 'https://[^"]+' \
-  | grep -E "/${exdir}/${pre}_[^/]+\.(bash|sh)$" \
-  | head -n1)
+if [ -n "$nome" ]; then
+  url="${RAW}/${exdir}/${nome}"
+else
+  echo "[run] consultando o GitHub para descobrir o passo..."
+  url=$(baixar "${API}/${exdir}?ref=${BRANCH}" \
+        | grep -oE '"download_url": *"[^"]+"' | grep -oE 'https://[^"]+' \
+        | grep -E "/${exdir}/${pre}_[^/]+\.(bash|sh)$" | head -n1)
+fi
 
-if [ -z "$url" ]; then
-  echo "[run] nao achei o passo ${ex}.${passo} (${exdir}/${pre}_*) no repositorio." >&2
+if [ -z "${url:-}" ]; then
+  echo "[run] nao encontrei o passo ${ex}.${passo} (${exdir}/${pre}_*)." >&2
   exit 1
 fi
 
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
-echo "[run] baixando: $(basename "$url")"
-baixar "$url" > "$tmp"
+echo "[run] baixando: ${url##*/}"
+if ! baixar "$url" > "$tmp" || [ ! -s "$tmp" ]; then
+  echo "[run] falha ao baixar o script (sem internet? repo/branch errado?)." >&2
+  exit 1
+fi
+echo "[run] executando: ${url##*/}"
 bash "$tmp" "$@"

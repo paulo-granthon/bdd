@@ -2,14 +2,14 @@
 #
 # EX03 - 04 - Maquina: N1 (192.168.1.2)
 # Cria um banco e uma tabela NDBCLUSTER, insere dados e mostra o conteudo.
-# Os dados devem aparecer automaticamente no N2 (ver script 05).
+# Os dados devem aparecer automaticamente no N2 (ver passo 3.5).
 # Idempotente: usa IF NOT EXISTS / INSERT IGNORE.
 #
-set -euo pipefail
+set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -E bash "$0" "$@"
 
 echo "[EX03/04][N1] criando banco/tabela e inserindo dados..."
-mysql -u root <<'SQL'
+if ! mysql -u root <<'SQL'
 CREATE DATABASE IF NOT EXISTS clusterdb;
 USE clusterdb;
 CREATE TABLE IF NOT EXISTS funcionarios (
@@ -22,5 +22,9 @@ INSERT IGNORE INTO funcionarios (id, nome) VALUES
   (3, 'Carla');
 SELECT * FROM funcionarios;
 SQL
+then
+  echo "[EX03/04][N1][ERRO] o mysql falhou (servidor SQL no ar? root sem senha?)." >&2
+  exit 1
+fi
 
-echo "[EX03/04][N1] feito. Rode o script 05 no N2 para confirmar a replicacao."
+echo "[EX03/04][N1] feito. Rode o passo 3.5 no N2 para confirmar a replicacao."

@@ -3,37 +3,44 @@
 # EX03 - 01 - Maquina: MGM (192.168.1.1)
 # Instala o no gerenciador (ndb_mgm / ndb_mgmd), cria o config.ini, configura o
 # servico de boot e sobe o gerenciador do cluster.
-# Idempotente: pode rodar de novo sem quebrar progresso ja feito.
+# Idempotente e tolerante a progresso parcial.
 #
-set -euo pipefail
+set -uo pipefail
 [ "$(id -u)" -eq 0 ] || exec sudo -E bash "$0" "$@"
+
+log()  { echo "[EX03/01][MGM] $*"; }
+erro() { echo "[EX03/01][MGM][ERRO] $*" >&2; exit 1; }
 
 VER="7.3.26"
 PKG="mysql-cluster-gpl-${VER}-linux-glibc2.12-x86_64"
 URL="https://downloads.mysql.com/archives/get/p/14/file/${PKG}.tar.gz"
 
-echo "[EX03/01][MGM] instalando o gerenciador do cluster..."
+log "iniciando instalacao do gerenciador do cluster..."
 
 # 1) Binarios do gerenciador (pula se ja estiverem instalados).
 if command -v ndb_mgmd >/dev/null 2>&1 && command -v ndb_mgm >/dev/null 2>&1; then
-  echo "[i] ndb_mgm/ndb_mgmd ja instalados, pulando download."
+  log "ndb_mgm/ndb_mgmd ja instalados, pulando download."
 else
+  log "baixando e instalando os binarios do gerenciador..."
   mkdir -p /usr/src/mysql-mgm
-  cd /usr/src/mysql-mgm
-  [ -f "${PKG}.tar.gz" ] || wget -O "${PKG}.tar.gz" "$URL"
-  tar -zxf "${PKG}.tar.gz"
-  cp "${PKG}/bin/ndb_mgm"  /usr/bin/
-  cp "${PKG}/bin/ndb_mgmd" /usr/bin/
+  cd /usr/src/mysql-mgm || erro "nao consegui entrar em /usr/src/mysql-mgm"
+  if [ ! -f "${PKG}.tar.gz" ]; then
+    wget --tries=3 -O "${PKG}.tar.gz" "$URL" || erro "falha no download do MySQL Cluster"
+  fi
+  tar -zxf "${PKG}.tar.gz" || erro "falha ao extrair o pacote"
+  cp "${PKG}/bin/ndb_mgm"  /usr/bin/ || erro "falha ao copiar ndb_mgm"
+  cp "${PKG}/bin/ndb_mgmd" /usr/bin/ || erro "falha ao copiar ndb_mgmd"
   chmod 755 /usr/bin/ndb_mg*
   cd /
   rm -rf /usr/src/mysql-mgm
-  echo "[i] binarios copiados para /usr/bin."
+  log "binarios copiados para /usr/bin."
 fi
 
 # 2) Diretorio de dados/config do gerenciador.
 mkdir -p /var/lib/mysql-cluster
 
 # 3) config.ini (sobrescreve com o conteudo correto).
+log "gravando /var/lib/mysql-cluster/config.ini ..."
 cat > /var/lib/mysql-cluster/config.ini <<'EOF'
 # MySQL Cluster Configuration
 [NDBD DEFAULT]
@@ -66,9 +73,9 @@ DataDir=/var/lib/mysql-cluster
 [MYSQLD]
 [MYSQLD]
 EOF
-echo "[i] config.ini gravado."
 
 # 4) Servico de boot do gerenciador.
+log "configurando o servico de boot (ndb_mgmd)..."
 cat > /etc/init.d/ndb_mgmd <<'EOF'
 #!/bin/sh
 ### BEGIN INIT INFO
@@ -86,12 +93,13 @@ chmod +x /etc/init.d/ndb_mgmd
 
 # 5) Sobe o gerenciador agora (se ainda nao estiver rodando) e habilita no boot.
 if pgrep -x ndb_mgmd >/dev/null 2>&1; then
-  echo "[i] ndb_mgmd ja esta em execucao."
+  log "ndb_mgmd ja esta em execucao."
 else
-  ndb_mgmd -f /var/lib/mysql-cluster/config.ini --configdir=/var/lib/mysql-cluster/
-  echo "[i] ndb_mgmd iniciado."
+  log "iniciando ndb_mgmd..."
+  ndb_mgmd -f /var/lib/mysql-cluster/config.ini --configdir=/var/lib/mysql-cluster/ \
+    || erro "ndb_mgmd nao iniciou (confira o config.ini)"
 fi
 systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl enable ndb_mgmd >/dev/null 2>&1 || true
 
-echo "[EX03/01][MGM] concluido. Confira depois com: ndb_mgm -e show"
+log "concluido. Confira com: ndb_mgm -e show"
