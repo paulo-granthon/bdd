@@ -1,57 +1,67 @@
-# Scripts de automacao - Projeto de Banco de Dados Distribuidos (FATEC-SJC)
+# Scripts de automação - Projeto de Banco de Dados Distribuídos (FATEC-SJC)
 
-Este repositorio automatiza os passos dos exercicios da disciplina, para nao
-precisar digitar todos os comandos na mao dentro das maquinas virtuais.
+Este repositório automatiza os passos dos exercícios da disciplina, para não
+precisar digitar todos os comandos na mão dentro das máquinas virtuais.
 
-Cada exercicio tem o seu diretorio. Dentro dele ficam os scripts daquele
-exercicio, numerados na ordem em que devem ser executados.
+Cada exercício tem o seu diretório. Dentro dele ficam os scripts daquele
+exercício, numerados na ordem em que devem ser executados.
 
-## As maquinas
+## As máquinas
 
-O ambiente (montado no EX02) tem tres VMs:
+O ambiente (montado no EX02) tem três VMs:
 
-| Maquina | Papel                  | IP (rede interna) |
+| Máquina | Papel                  | IP (rede interna) |
 |---------|------------------------|-------------------|
 | MGM     | Gerenciador do cluster | 192.168.1.1       |
-| N1      | No de dados 1          | 192.168.1.2       |
-| N2      | No de dados 2          | 192.168.1.3       |
+| N1      | Nó de dados 1          | 192.168.1.2       |
+| N2      | Nó de dados 2          | 192.168.1.3       |
 
-## Convencao de nomes
+## Convenção de nomes
 
 ```
-<ordem>_<maquina>_<o-que-faz>.bash
+<ordem>_<máquina>_<o-que-faz>.bash
 ```
 
-- **ordem**: 01, 02, 03 ... ordem de execucao dentro do exercicio.
-- **maquina**: onde rodar o script. Pode ser `MGM`, `N1`, `N2` ou `N1-N2`
-  (este ultimo significa "rode o mesmo script nos dois nos de dados").
-- **o-que-faz**: descricao curta.
+- **ordem**: 01, 02, 03 ... ordem de execução dentro do exercício.
+- **máquina**: onde rodar o script. Pode ser `MGM`, `N1`, `N2` ou `N1-N2`
+  (este último significa "rode o mesmo script nos dois nós de dados").
+- **o-que-faz**: descrição curta.
 
 ## Como usar
 
-### Jeito facil: o script `run`
+### Jeito fácil: o script `run`
 
-Baixe so o `run` uma vez em cada maquina e chame os passos por numero
-(`<exercicio>.<passo>`). O `run` acha o script certo: usa o arquivo local se o
-repo estiver clonado, ou baixa do GitHub se voce so pegou o `run`.
+Baixe só o `run` uma vez em cada máquina e chame os passos por número
+(`<exercício>.<passo>`). O `run` acha o script certo: usa o arquivo local se o
+repositório estiver clonado, ou baixa do GitHub se você só pegou o `run`.
 
 ```
-# baixe o run (uma vez por maquina)
 wget https://raw.githubusercontent.com/paulo-granthon/bdd/main/run -O run
+```
 
-# rode cada passo NA MAQUINA INDICADA:
+> Atenção: use **`-O run`** (O maiúsculo) para salvar o arquivo. Com `-o run`
+> (o minúsculo) o wget grava só o *log* dele no arquivo, e o `run` sai **vazio**
+> (rodar um arquivo vazio não faz nada). Para conferir que baixou certo:
+> `head -1 run` deve mostrar `#!/usr/bin/env bash`.
+
+Depois, rode cada passo **na máquina indicada**:
+
+```
 bash run 3.1     # MGM:     instala o gerenciador
-bash run 3.2     # N1 e N2: instala o no de dados (rode nas duas)
+bash run 3.2     # N1 e N2: instala o nó de dados (rode nas duas)
 bash run 3.3     # MGM:     verifica o cluster
 bash run 3.4     # N1:      cria banco e insere
-bash run 3.5     # N2:      verifica a replicacao
+bash run 3.5     # N2:      verifica a replicação
 ```
 
-Ou tudo em uma linha so (baixa e executa):
+Ou tudo em uma linha só (baixa e executa, sem salvar arquivo):
 
 ```
 wget -qO- https://raw.githubusercontent.com/paulo-granthon/bdd/main/run | bash -s 3.1
 ```
+
+Aqui o `-O-` (com hífen, mandando para a saída padrão) é o certo, e o `|` joga
+no `bash`. Não troque por `-o`.
 
 ### Jeito manual: baixar o script direto
 
@@ -60,7 +70,7 @@ wget https://raw.githubusercontent.com/paulo-granthon/bdd/main/EX03/01_MGM_insta
 bash script.bash
 ```
 
-### Ou clonar o repositorio
+### Ou clonar o repositório
 
 ```
 git clone https://github.com/paulo-granthon/bdd.git
@@ -70,33 +80,49 @@ bash run 3.1                              # na MGM
 bash EX03/01_MGM_instala-gerenciador.bash # na MGM
 ```
 
-Os scripts pedem privilegio de root automaticamente (re-executam com `sudo`),
-entao basta chamar com `bash`.
+Os scripts pedem privilégio de root automaticamente (re-executam com `sudo`),
+então basta chamar com `bash`.
 
-## Seguranca / progresso parcial
+## Segurança / progresso parcial
 
-Os scripts sao **idempotentes**: podem ser rodados de novo sem quebrar. Eles
-checam o que ja existe (diretorios, usuarios, pacotes, binarios, servicos) e so
-fazem o que falta. Como nao da pra adivinhar "onde voce parou", cada script se
-vira sozinho com o que encontrar na maquina.
+Os scripts são **idempotentes**: podem ser rodados de novo sem quebrar. Eles
+checam o que já existe (diretórios, usuários, pacotes, binários, serviços) e só
+fazem o que falta. Como não dá para adivinhar "onde você parou", cada script se
+vira sozinho com o que encontrar na máquina. Cada passo anuncia o que está
+fazendo, então dá para ver na tela onde parou se algo der errado.
 
-## Pre-requisitos
+## Pré-requisitos
 
-- Ambiente de rede do EX02 pronto (as tres VMs se enxergam por `ping`).
-- Acesso a internet nas VMs (download do MySQL Cluster e pacotes `apt`).
-- Ubuntu 16.04 (alvo dos exercicios), MySQL Cluster 7.3.26.
+- Ambiente de rede do EX02 pronto (as três VMs se enxergam por `ping`).
+- Acesso à internet nas VMs (download do MySQL Cluster e pacotes `apt`).
+- Ubuntu 16.04 (alvo dos exercícios), MySQL Cluster 7.3.26.
 
-## EX03 - Instalacao do MySQL Cluster
+## EX03 - Instalação do MySQL Cluster
 
-Ordem de execucao:
+Ordem de execução:
 
-| Ordem | Maquina | Script                                | O que faz |
+| Ordem | Máquina | Script                                | O que faz |
 |-------|---------|---------------------------------------|-----------|
 | 01    | MGM     | `01_MGM_instala-gerenciador.bash`     | Instala ndb_mgm/ndb_mgmd, cria o config.ini, sobe o gerenciador e habilita no boot |
-| 02    | N1 e N2 | `02_N1-N2_instala-no-de-dados.bash`   | Instala o MySQL Cluster como no de dados, cria o my.cnf, sobe o ndbd e o mysqld |
-| 03    | MGM     | `03_MGM_verifica-cluster.bash`        | Mostra os nos conectados (`ndb_mgm -e show`) |
+| 02    | N1 e N2 | `02_N1-N2_instala-no-de-dados.bash`   | Instala o MySQL Cluster como nó de dados, cria o my.cnf, sobe o ndbd e o mysqld |
+| 03    | MGM     | `03_MGM_verifica-cluster.bash`        | Mostra os nós conectados (`ndb_mgm -e show`) |
 | 04    | N1      | `04_N1_cria-banco-e-insere.bash`      | Cria banco + tabela NDBCLUSTER e insere dados |
 | 05    | N2      | `05_N2_verifica-replicacao.bash`      | Confirma que os dados criados no N1 aparecem no N2 |
 
-Rode o **02** nas duas maquinas de dados (N1 e N2). O gerenciador (passo 01)
-precisa estar no ar antes dos nos de dados subirem (passo 02).
+Rode o **02** nas duas máquinas de dados (N1 e N2). O gerenciador (passo 01)
+precisa estar no ar antes dos nós de dados subirem (passo 02).
+
+## Solução de problemas
+
+- **O `run` (ou o arquivo baixado) não faz nada / sai vazio.** Você provavelmente
+  salvou com `-o` no lugar de `-O`. Confira com `head -1 run`; se não aparecer
+  `#!/usr/bin/env bash`, baixe de novo usando `-O run`.
+
+- **`E: Unable to lock /var/lib/apt/...` ou `Could not get lock`.** Logo após o
+  boot, o próprio Ubuntu roda atualizações (`apt-daily`/`unattended-upgrades`) e
+  segura o `apt`. O passo 02 já espera o lock liberar e tenta de novo sozinho por
+  alguns minutos. Se rodou algum `apt` na mão, é só esperar 1-2 min e rodar de novo.
+
+- **`ndbd` não conecta / `ndb_mgm -e show` mostra nó desconectado.** Garanta que o
+  passo 3.1 (gerenciador, na MGM) rodou e está no ar antes do 3.2 (nós de dados),
+  e que as três VMs se enxergam por `ping` (rede do EX02).
