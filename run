@@ -13,7 +13,7 @@
 set -euo pipefail
 
 USUARIO="paulo-granthon"
-REPO="bdd-cluster-scripts"
+REPO="bdd"
 BRANCH="main"
 API="https://api.github.com/repos/${USUARIO}/${REPO}/contents"
 

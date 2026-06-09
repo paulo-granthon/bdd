@@ -37,7 +37,7 @@ repo estiver clonado, ou baixa do GitHub se voce so pegou o `run`.
 
 ```
 # baixe o run (uma vez por maquina)
-wget https://raw.githubusercontent.com/paulo-granthon/bdd-cluster-scripts/main/run -O run
+wget https://raw.githubusercontent.com/paulo-granthon/bdd/main/run -O run
 
 # rode cada passo NA MAQUINA INDICADA:
 bash run 3.1     # MGM:     instala o gerenciador
@@ -50,21 +50,21 @@ bash run 3.5     # N2:      verifica a replicacao
 Ou tudo em uma linha so (baixa e executa):
 
 ```
-wget -qO- https://raw.githubusercontent.com/paulo-granthon/bdd-cluster-scripts/main/run | bash -s 3.1
+wget -qO- https://raw.githubusercontent.com/paulo-granthon/bdd/main/run | bash -s 3.1
 ```
 
 ### Jeito manual: baixar o script direto
 
 ```
-wget https://raw.githubusercontent.com/paulo-granthon/bdd-cluster-scripts/main/EX03/01_MGM_instala-gerenciador.bash -O script.bash
+wget https://raw.githubusercontent.com/paulo-granthon/bdd/main/EX03/01_MGM_instala-gerenciador.bash -O script.bash
 bash script.bash
 ```
 
 ### Ou clonar o repositorio
 
 ```
-git clone https://github.com/paulo-granthon/bdd-cluster-scripts.git
-cd bdd-cluster-scripts
+git clone https://github.com/paulo-granthon/bdd.git
+cd bdd
 bash run 3.1                              # na MGM
 # ou direto:
 bash EX03/01_MGM_instala-gerenciador.bash # na MGM
