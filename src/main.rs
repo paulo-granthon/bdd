@@ -21,6 +21,7 @@ fn main() {
         "log" => cmd_log(),
         "next" => cmd_next(),
         "ok" => cmd_ok(),
+        "sync" => cmd_sync(),
         "check" => cmd_check(),
         "id" => cmd_id(args.get(1).map(|s| s.as_str())),
         s if is_step_id(s) => cmd_run(s),
@@ -46,6 +47,7 @@ fn usage() {
     println!("  bdd log     lista todos os passos e o estado de cada um");
     println!("  bdd next    mostra o próximo passo a executar");
     println!("  bdd ok      marca o próximo passo como feito (passo de OUTRA máquina)");
+    println!("  bdd sync    adota o progresso já feito (antes do bdd) checando a máquina");
     println!("  bdd check   roda as validações e diz o que está pendente");
     println!("  bdd id      mostra/define qual máquina é esta (MGM/N1/N2)");
     println!();
@@ -370,6 +372,54 @@ fn legenda() {
     println!("  {}   não roda nesta máquina", ui::paint(ui::FADED_RED, "x.y"));
     println!("  {}   assumido feito (já avançamos além dele)", ui::paint(ui::BLUE, "x.y"));
     println!("  {}   ainda não feito", ui::paint(ui::FADED, "x.y"));
+}
+
+// ----------------------------------------------------------------- sync
+
+fn cmd_sync() {
+    let steps = manifest();
+    let mut st = State::load();
+    let (role, origin) = current_role();
+    let role = match role {
+        Some(r) => r,
+        None => {
+            eprintln!("{}", ui::paint(ui::RED, "Papel da máquina indefinido."));
+            ui::proximo(&["defina: bdd id".to_string()]);
+            return;
+        }
+    };
+
+    ui::header("Sincronizando com o estado real da máquina");
+    println!("Máquina: {} ({})", ui::paint(ui::BOLD, role.name()), origin);
+    println!("{}", ui::paint(ui::DIM, "Roda as validações e adota como feito os passos desta máquina que já passam."));
+    println!();
+
+    let mut adotados = 0;
+    for s in steps.iter() {
+        if !s.for_role(role) {
+            continue;
+        }
+        let id = s.id();
+        if st.has_ran(&id) {
+            continue;
+        }
+        if run_validation(s, role) {
+            st.mark_ran(&id);
+            st.mark_checked(&id);
+            adotados += 1;
+            println!("{}", ui::paint(ui::GREEN, &format!("  {} {}  adotado: {}", id, ui::CHECK, s.title)));
+        }
+    }
+
+    if adotados == 0 {
+        println!("{}", ui::paint(ui::FADED, "  nada novo a adotar (nenhum passo desta máquina passou que já não estivesse marcado)."));
+    }
+    println!();
+    println!("{}", ui::paint(ui::DIM, "Passos de OUTRAS máquinas não são adotados aqui; rode `bdd sync` em cada VM e use `bdd ok` para os de outra máquina."));
+    ui::proximo(&[
+        "veja onde você está: bdd log".to_string(),
+        "próximo passo: bdd next".to_string(),
+    ]);
 }
 
 // ----------------------------------------------------------------- check
