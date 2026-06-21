@@ -3,6 +3,19 @@
 Transforma as três VMs cruas do EX02 em um cluster MySQL (NDB) funcionando, com
 replicação automática dos dados entre os nós.
 
+## Como testar (resumo)
+
+Depois de instalar (passos `3.1` na MGM e `3.2` no N1 e no N2):
+
+```
+bash run 3.3   # na MGM: deve listar N1 e N2 conectados
+bash run 3.4   # no N1:  cria e insere; deve mostrar Ana, Bruno, Carla
+bash run 3.5   # no N2:  deve mostrar os MESMOS Ana, Bruno, Carla (replicou)
+```
+
+Passou se: o `3.3` mostra os dois data nodes conectados e o `3.5` (no N2) lista
+os dados que o `3.4` inseriu no N1. Detalhes e o que olhar no fim deste arquivo.
+
 ## Antes (estado inicial)
 
 Saindo do EX02, temos três VMs Ubuntu 16.04 que só se enxergam pela rede:
@@ -78,3 +91,76 @@ Ordem, máquina e o que cada um faz estão no
 [README do repositório](../README.md#ex03---instalação-do-mysql-cluster).
 Resumo: `3.1` (MGM) instala o gerenciador, `3.2` (N1 e N2) instala os nós de
 dados, `3.3`/`3.4`/`3.5` verificam e testam a replicação.
+
+## Como testar (detalhado)
+
+### 1. Os nós estão todos conectados? (na MGM)
+
+```
+bash run 3.3
+```
+
+Roda `ndb_mgm -e show`. Esperado: os dois `[ndbd]` aparecem **connected** (com
+IP e nodegroup, não "not connected"), o `[ndb_mgmd]` no ar e os `[mysqld]`
+(API) conectados. Algo assim:
+
+```
+[ndbd(NDB)]     2 node(s)
+id=2    @192.168.1.2  (mysql-5.6.x ndb-7.3.26, Nodegroup: 0)
+id=3    @192.168.1.3  (mysql-5.6.x ndb-7.3.26, Nodegroup: 0)
+
+[ndb_mgmd(MGM)] 1 node(s)
+id=1    @192.168.1.1  (mysql-5.6.x ndb-7.3.26)
+
+[mysqld(API)]   2 node(s)
+id=4    @192.168.1.2  (...)
+id=5    @192.168.1.3  (...)
+```
+
+Se um data node sai como "not connected": confira que o `3.2` rodou naquela
+máquina e que o gerenciador (`3.1`) subiu antes.
+
+### 2. Escreve no N1 e lê no N2 (a replicação)
+
+No **N1**:
+
+```
+bash run 3.4
+```
+
+Cria o banco `clusterdb`, a tabela `funcionarios` (`ENGINE=NDBCLUSTER`), insere
+3 linhas e mostra:
+
+```
++----+-------+
+| id | nome  |
++----+-------+
+|  1 | Ana   |
+|  2 | Bruno |
+|  3 | Carla |
++----+-------+
+```
+
+No **N2**:
+
+```
+bash run 3.5
+```
+
+Sem inserir nada, só lê. Passou se aparecerem **as mesmas** Ana/Bruno/Carla:
+foram escritas no N1 e replicadas para o N2 pelo NDB.
+
+### 3. (Opcional) Tolerância a falha
+
+Com `NoOfReplicas=2`, derrubar um data node não perde dado. No **N2** pare o
+`ndbd` (`sudo /etc/init.d/ndbd stop` ou mate o processo) e, no N1, rode de novo
+a leitura (`bash run 3.4` mostra o SELECT, ou `mysql -u root -e "SELECT * FROM
+clusterdb.funcionarios;"`): os dados continuam lá. Suba o nó de volta com
+`bash run 3.2` (ou `sudo /etc/init.d/ndbd start`) e ele ressincroniza.
+
+### Checklist
+
+- [ ] `3.3` (MGM) mostra N1 e N2 **connected**.
+- [ ] `3.4` (N1) insere e mostra Ana/Bruno/Carla.
+- [ ] `3.5` (N2) mostra os mesmos dados sem ter inserido.
+- [ ] (opcional) derrubar um data node não perde os dados.
