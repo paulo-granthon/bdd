@@ -165,54 +165,17 @@ clusterdb.funcionarios;"`): os dados continuam lá. Suba o nó de volta com
 - [ ] `3.5` (N2) mostra os mesmos dados sem ter inserido.
 - [ ] (opcional) derrubar um data node não perde os dados.
 
-## Capturas de tela (provas)
+## Provas para anexar
 
-A entrega pede prints de tela do funcionamento. A dica é mostrar, no **mesmo
-print**, qual é a máquina (hostname/IP) e o resultado. Para isso, prefixe o
-comando com `hostname -I`, assim o IP da VM aparece logo acima da saída.
-
-### Print 1 - MGM: nós conectados
-
-Na **MGM**, capture a tela com:
+A saída destes comandos é a validação do exercício, é isso que se captura e anexa:
 
 ```
+# MGM
 hostname -I && bash run 3.3
-```
-
-O que precisa aparecer no print: o IP `192.168.1.1` e a saída do `ndb_mgm -e
-show` com os **dois data nodes connected** (id=2 @192.168.1.2 e id=3
-@192.168.1.3) e os `[mysqld]` (API) conectados.
-
-### Print 2 - N1: criação e inserção
-
-No **N1**, capture:
-
-```
+# N1
 hostname -I && bash run 3.4
-```
-
-O que precisa aparecer: o IP `192.168.1.2` e a tabela com **Ana, Bruno, Carla**
-(o `CREATE TABLE ... ENGINE=NDBCLUSTER` e o `SELECT` no resultado).
-
-### Print 3 - N2: replicação
-
-No **N2**, capture:
-
-```
+# N2
 hostname -I && bash run 3.5
 ```
 
-O que precisa aparecer: o IP `192.168.1.3` e o **mesmo** Ana/Bruno/Carla, sem
-ter inserido nada no N2 (prova de que replicou do N1).
-
-### Prints extras (reforçam a entrega)
-
-- Serviços no ar em cada nó de dados (N1 e N2):
-  `hostname -I && sudo /etc/init.d/mysql.server status && pgrep -a ndbd`
-- Conteúdo das configs (mostra que foram criadas certas):
-  - MGM: `hostname -I && cat /var/lib/mysql-cluster/config.ini`
-  - N1/N2: `hostname -I && cat /etc/my.cnf`
-
-Dica: se o terminal não couber tudo numa tela, role para o topo do comando antes
-do print, ou use o `ndb_mgm -e show` direto (sem o `bash run`) para uma saída
-mais curta no Print 1.
+(`hostname -I` mostra o IP da VM junto da saída, identificando a máquina.)
