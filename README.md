@@ -80,9 +80,11 @@ bdd id
 - Os **scripts dos passos** (bash) ficam **embutidos** no binário. `bdd 3.1`
   extrai e executa o script certo. Depois de instalado, não precisa baixar mais
   nada (bom para a rede instável das VMs).
-- **CI/CD**: cada push na `main` compila o binário e publica numa release
-  `latest` no GitHub; o instalador (`install.sh`) é servido pelo GitHub Pages em
-  `paulo-granthon.github.io/bdd`.
+- **CI/CD**: cada push na `main` (que mexa no código ou no instalador) compila o
+  binário e publica no GitHub Pages: o binário em `paulo-granthon.github.io/bdd/bin`
+  e o instalador em `paulo-granthon.github.io/bdd`. O deploy do Pages é
+  **atômico**: no redeploy o site segue servindo a versão antiga e só troca
+  quando a nova fica pronta, então a URL nunca cai.
 - **Estado** em `/var/lib/bdd/state`: o que já rodou e o que já validou. Por isso
   você pode fechar a sessão e voltar depois que o `bdd` sabe onde parou.
 - **Identidade da máquina**: detectada pelo IP interno (`192.168.1.x`) definido
@@ -167,7 +169,7 @@ Os passos ficam em `EX0N/*.bash` e são embutidos via `include_str!` em
 `src/model.rs` (que também guarda papel da máquina e o comando de validação de
 cada passo).
 
-O workflow `.github/workflows/release.yml` compila e publica a release `latest` a
-cada push na `main`, e serve o `install.sh` pelo GitHub Pages. Para a Opção B de
-instalação funcionar, habilite o Pages uma vez em Settings > Pages > Source:
-GitHub Actions. A Opção A (inject pelo host) não depende do Pages.
+O workflow `.github/workflows/release.yml` compila o binário e publica o site do
+Pages (binário + instalador) a cada push na `main`. Habilite o Pages uma vez em
+Settings > Pages > Source: GitHub Actions. Tanto a Opção A quanto a B baixam o
+binário do Pages.

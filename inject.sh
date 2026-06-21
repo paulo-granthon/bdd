@@ -5,19 +5,28 @@
 #
 set -euo pipefail
 
-URL="https://github.com/paulo-granthon/bdd/releases/latest/download/bdd"
+URL="https://paulo-granthon.github.io/bdd/bin"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN="${DIR}/bdd"
 
-echo "[inject] baixando o bdd..."
-if command -v curl >/dev/null 2>&1; then
-  curl -fSL "$URL" -o "$BIN"
-elif command -v wget >/dev/null 2>&1; then
-  wget -O "$BIN" "$URL"
-else
-  echo "[inject] preciso de curl ou wget no host." >&2
-  exit 1
-fi
-chmod +x "$BIN"
+fetch() {
+  if command -v curl >/dev/null 2>&1; then curl -fSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then wget -O "$2" "$1"
+  else echo "[inject] preciso de curl ou wget no host." >&2; return 2; fi
+}
 
+echo "[inject] baixando o bdd..."
+# A release 'latest' e re-publicada a cada push; logo apos um push o asset pode
+# dar 404 por ~1 min enquanto sobe. Por isso tentamos algumas vezes.
+ok=0
+for try in 1 2 3 4 5 6; do
+  if fetch "$URL" "$BIN" && [ -s "$BIN" ]; then ok=1; break; fi
+  rc=$?
+  [ "$rc" = 2 ] && exit 1
+  echo "[inject] ainda nao disponivel (tentativa ${try}), aguardando 10s..."
+  sleep 10
+done
+[ "$ok" = 1 ] || { echo "[inject] nao consegui baixar o binario." >&2; exit 1; }
+
+chmod +x "$BIN"
 exec "$BIN" inject

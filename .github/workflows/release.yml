@@ -1,17 +1,30 @@
-name: release
+name: deploy
 
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "EX0*/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "install.sh"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
+# Uma execução por vez; deploy do Pages é atômico (o site velho continua no ar
+# até o novo ficar pronto, então a URL nunca cai durante o redeploy).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
-  build-release:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,31 +37,25 @@ jobs:
       - name: Build static binary
         run: cargo build --release --target x86_64-unknown-linux-musl
 
-      - name: Stage artifact
-        run: |
-          mkdir -p dist
-          cp target/x86_64-unknown-linux-musl/release/bdd dist/bdd
-          chmod +x dist/bdd
-
-      - name: Publish rolling 'latest' release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: latest
-          files: dist/bdd
-          fail_on_unmatched_files: true
-
-  deploy-pages:
-    runs-on: ubuntu-latest
-    needs: build-release
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Pages site (installer served at /bdd/)
+      - name: Assemble Pages site
         run: |
           mkdir -p site
+          # instalador servido na raiz: curl .../bdd devolve o install.sh
           cp install.sh site/index.html
           cp install.sh site/install.sh
+          # binário servido em /bdd/bin (o instalador e o injetor baixam daqui)
+          cp target/x86_64-unknown-linux-musl/release/bdd site/bin
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
-      - uses: actions/deploy-pages@v4
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
