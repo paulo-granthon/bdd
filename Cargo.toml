@@ -8,6 +8,10 @@ description = "CLI para os exercícios de Projeto de Banco de Dados Distribuído
 name = "bdd"
 path = "src/main.rs"
 
+[dependencies]
+# usado só pelo `bdd inject` (host) para a interface interativa (TUI)
+crossterm = "0.28"
+
 [profile.release]
 opt-level = "z"
 lto = true

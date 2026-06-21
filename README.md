@@ -27,32 +27,30 @@ Duas opções. A primeira não exige digitar nada dentro da VM.
 
 ### Opção A (recomendada): injetar do host via SSH
 
-Roda no **seu computador (host)**, não na VM. O host baixa o binário e instala
-em cada VM por SSH. Funciona assim que as VMs estão ligadas com OpenSSH (vem do
-EX02), mesmo antes de configurar os IPs internos.
+Roda no **seu computador (host)**, não na VM, pelo comando `bdd inject`. O host
+acha as VMs, instala o binário em cada uma por SSH e já define o papel. Funciona
+assim que as VMs estão ligadas com OpenSSH (vem do EX02).
 
 Pré-requisitos no host: `ssh`, `scp`, `sshpass` e `curl` ou `wget`.
 
 ```
-git clone https://github.com/paulo-granthon/bdd.git
-cd bdd
-./inject.sh
+# no HOST: baixe o bdd e rode o injetor
+curl -fSL https://github.com/paulo-granthon/bdd/releases/latest/download/bdd -o bdd && chmod +x bdd
+./bdd inject
 ```
 
-O `inject.sh`:
+O `bdd inject` é uma interface interativa (TUI) que:
 
-1. procura as VMs na sua rede (hosts com SSH aberto);
-2. mostra a lista numerada; você marca qual é o **MGM**, qual é o **N1** e qual é
-   o **N2** (pode marcar menos de três);
-3. para cada uma, pede usuário e senha do SSH (re-pergunta se errar);
-4. copia o binário, instala em `/usr/local/bin/bdd` e já define o papel da
-   máquina (`bdd id`).
+1. pede as credenciais SSH numa grade (até 3 pares usuário/senha; cada VM é
+   testada com todos os pares, então serve para logins iguais ou diferentes);
+2. procura as VMs na rede (scan de porta SSH, ignorando o próprio host);
+3. lista as VMs e, quando o EX02 já foi feito, **sugere** quem é MGM / N1 / N2
+   pelo hostname e pelo IP interno (`192.168.1.x`);
+4. você confirma/ajusta os papéis com as setas e o Enter (e pode adicionar um IP
+   na mão com `a` se o scan perder alguma);
+5. ao confirmar (F2), instala em todas de uma vez e define o papel de cada uma.
 
 Pronto: `bdd` está em todas, cada uma já sabe quem é.
-
-Se o EX02 já foi feito (IPs internos configurados), o `inject.sh` **sonda cada
-VM por SSH** e já sugere quem é MGM / N1 / N2 (pelo hostname e pelo IP interno).
-Quando a sugestão cobre as três, é só aceitar com Enter, sem marcar na mão.
 
 ### Opção B: instalar na própria VM (on-box)
 
@@ -154,7 +152,9 @@ testar e o que capturar como prova.
 
 ## Desenvolvimento
 
-Binário em Rust (`src/`), só biblioteca padrão, sem crates externos. Build local:
+Binário em Rust (`src/`). O núcleo (comandos nas VMs) usa só a biblioteca padrão;
+o `bdd inject` (TUI no host) usa o crate `crossterm`. Nada disso vira dependência
+nas VMs: elas só recebem o binário estático. Build local:
 
 ```
 rustup target add x86_64-unknown-linux-musl

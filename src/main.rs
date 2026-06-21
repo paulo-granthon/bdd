@@ -1,6 +1,7 @@
 //! bdd - CLI dos exercícios de Projeto de Banco de Dados Distribuídos (FATEC-SJC).
 
 mod detect;
+mod inject;
 mod model;
 mod state;
 mod ui;
@@ -24,6 +25,7 @@ fn main() {
         "sync" => cmd_sync(),
         "check" => cmd_check(),
         "id" => cmd_id(args.get(1).map(|s| s.as_str())),
+        "inject" => inject::run(),
         s if is_step_id(s) => cmd_run(s),
         other => {
             eprintln!("{}", ui::paint(ui::RED, &format!("Comando desconhecido: '{}'", other)));
@@ -50,6 +52,7 @@ fn usage() {
     println!("  bdd sync    adota o progresso já feito (antes do bdd) checando a máquina");
     println!("  bdd check   roda as validações e diz o que está pendente");
     println!("  bdd id      mostra/define qual máquina é esta (MGM/N1/N2)");
+    println!("  bdd inject  (no HOST) instala o bdd nas VMs por SSH (TUI)");
     println!();
     let (role, origin) = current_role();
     match role {
