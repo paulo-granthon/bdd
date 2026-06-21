@@ -34,10 +34,12 @@ assim que as VMs estão ligadas com OpenSSH (vem do EX02).
 Pré-requisitos no host: `ssh`, `scp`, `sshpass` e `curl` ou `wget`.
 
 ```
-# no HOST: baixe o bdd e rode o injetor
-curl -fSL https://github.com/paulo-granthon/bdd/releases/latest/download/bdd -o bdd && chmod +x bdd
-./bdd inject
+git clone https://github.com/paulo-granthon/bdd.git
+cd bdd
+./inject.sh
 ```
+
+O `inject.sh` só baixa o binário e abre o injetor (`bdd inject`).
 
 O `bdd inject` é uma interface interativa (TUI) que:
 
