@@ -14,11 +14,11 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crossterm::cursor::{MoveToColumn, MoveToPreviousLine};
+use crossterm::cursor::{Hide, MoveToColumn, MoveToPreviousLine, Show};
 use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::Print;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
-use crossterm::queue;
+use crossterm::{execute, queue};
 
 const SSH_OPTS: &[&str] = &[
     "-o", "StrictHostKeyChecking=no",
@@ -399,6 +399,7 @@ fn tui_creds() -> Option<Vec<(String, String)>> {
     if enable_raw_mode().is_err() {
         return None;
     }
+    let _ = execute!(stdout(), Hide);
     let result;
     loop {
         // promoção: enquanto a última coluna estiver preenchida e houver espaço, abre a próxima
@@ -460,6 +461,7 @@ fn tui_creds() -> Option<Vec<(String, String)>> {
         }
     }
     scr.clear();
+    let _ = execute!(stdout(), Show);
     let _ = disable_raw_mode();
     match result {
         Some(v) if !v.is_empty() => Some(v),
@@ -565,19 +567,6 @@ fn render_creds(cols: &[Col], placeholder: bool, frow: usize, fcol: usize) -> Ve
         body.push(line);
     }
 
-    // botoes
-    let enter_focus = frow == 3 && fcol == 0;
-    let esc_focus = frow == 3 && fcol == 1;
-    let btn = |txt: &str, focus: bool| -> String {
-        let inner = format!(" {} ", txt);
-        if focus { fg(FG_BRIGHT, &format!("[{}]", inner)) } else { fg(FG_NORM, &format!("[{}]", inner)) }
-    };
-    let mut btn_line = String::new();
-    btn_line.push_str(&" ".repeat(gut));
-    btn_line.push_str(&btn("Enter", enter_focus));
-    btn_line.push_str("   ");
-    btn_line.push_str(&btn("Esc", esc_focus));
-
     // dica (espaço reservado mesmo quando vazia)
     let hint = if frow == 1 || frow == 2 {
         fg(FG_DIM, "Ctrl+U limpa o campo  -  Tab move  -  setas movem")
@@ -587,23 +576,54 @@ fn render_creds(cols: &[Col], placeholder: bool, frow: usize, fcol: usize) -> Ve
         String::new()
     };
 
-    // largura do conteúdo para o painel
+    // largura do painel
     let content_w = gut + total_cols * (SEG + 1);
-    let panelw = content_w.max(visible_len(&btn_line)).max(50);
+    let panelw = content_w.max(50);
+
+    // botoes em caixa, centralizados
+    let enter_focus = frow == 3 && fcol == 0;
+    let esc_focus = frow == 3 && fcol == 1;
+    let eb = boxed_button("Enter", enter_focus);
+    let sb = boxed_button("Esc", esc_focus);
+    let gap = 3usize;
+    let combined = button_box_w("Enter") + gap + button_box_w("Esc");
+    let leftpad = panelw.saturating_sub(combined) / 2;
+    let lp = " ".repeat(leftpad);
+    let g = " ".repeat(gap);
+    let btn_top = format!("{}{}{}{}", lp, eb[0], g, sb[0]);
+    let btn_mid = format!("{}{}{}{}", lp, eb[1], g, sb[1]);
+    let btn_bot = format!("{}{}{}{}", lp, eb[2], g, sb[2]);
 
     // monta painel com fundo dim
     let mut out: Vec<String> = Vec::new();
     out.push(panel_top("Credenciais", panelw));
     out.push(panel_line("", panelw));
-    for (i, l) in body.iter().enumerate() {
-        let _ = i;
+    for l in &body {
         out.push(panel_line(l, panelw));
     }
     out.push(panel_line("", panelw));
-    out.push(panel_line(&btn_line, panelw));
+    out.push(panel_line(&btn_top, panelw));
+    out.push(panel_line(&btn_mid, panelw));
+    out.push(panel_line(&btn_bot, panelw));
     out.push(panel_line(&hint, panelw));
     out.push(panel_bottom(panelw));
     out
+}
+
+fn button_box_w(txt: &str) -> usize {
+    txt.chars().count() + 4 // " txt " + 2 bordas
+}
+
+fn boxed_button(txt: &str, focus: bool) -> [String; 3] {
+    let inner = format!(" {} ", txt);
+    let w = inner.chars().count();
+    let code = if focus { FG_CYAN } else { FG_NORM };
+    let tcode = if focus { FG_BRIGHT } else { FG_NORM };
+    [
+        fg(code, &format!("\u{250c}{}\u{2510}", "\u{2500}".repeat(w))),
+        format!("{}{}{}", fg(code, "\u{2502}"), fg(tcode, &inner), fg(code, "\u{2502}")),
+        fg(code, &format!("\u{2514}{}\u{2518}", "\u{2500}".repeat(w))),
+    ]
 }
 
 fn col_seg(c: &Col, kind: usize, ci: usize, frow: usize, fcol: usize) -> String {
@@ -674,13 +694,13 @@ fn visible_len(s: &str) -> usize {
 }
 
 fn panel_top(title: &str, w: usize) -> String {
-    let t = format!("\u{256d}\u{2500} {} ", title);
-    let used = visible_len(&t) + 1;
-    let fill = w.saturating_sub(used) + 2;
-    format!("{}{}{}{}{}", FG_DIM, t, "\u{2500}".repeat(fill), "\u{256e}", RESET)
+    // largura total visível das linhas internas = w + 4 ("│ " + w + " │")
+    let head = format!("\u{256d}\u{2500} {} ", title); // ╭─ titulo (espaço)
+    let dashes = (w + 4).saturating_sub(visible_len(&head) + 1); // -1 do ╮
+    format!("{}{}{}{}\u{256e}{}", BG, FG_DIM, head, "\u{2500}".repeat(dashes), RESET)
 }
 fn panel_bottom(w: usize) -> String {
-    format!("{}\u{2570}{}\u{256f}{}", FG_DIM, "\u{2500}".repeat(w + 2), RESET)
+    format!("{}{}\u{2570}{}\u{256f}{}", BG, FG_DIM, "\u{2500}".repeat(w + 2), RESET)
 }
 fn panel_line(content: &str, w: usize) -> String {
     let vis = visible_len(content);
@@ -706,6 +726,7 @@ fn tui_select(cands: &mut [Cand], creds: &[(String, String)]) -> Option<Vec<(Rol
     if enable_raw_mode().is_err() {
         return None;
     }
+    let _ = execute!(stdout(), Hide);
     let result;
     loop {
         let total = cands.len() + manual.len();
@@ -758,6 +779,7 @@ fn tui_select(cands: &mut [Cand], creds: &[(String, String)]) -> Option<Vec<(Rol
         }
     }
     scr.clear();
+    let _ = execute!(stdout(), Show);
     let _ = disable_raw_mode();
     result
 }
@@ -780,6 +802,7 @@ fn pick_role() -> Option<Role> {
     if enable_raw_mode().is_err() {
         return None;
     }
+    let _ = execute!(stdout(), Hide);
     let res;
     loop {
         let mut lines = vec![fg(FG_BRIGHT, "Papel desta VM:"), String::new()];
@@ -802,6 +825,7 @@ fn pick_role() -> Option<Role> {
         }
     }
     scr.clear();
+    let _ = execute!(stdout(), Show);
     let _ = disable_raw_mode();
     res
 }
