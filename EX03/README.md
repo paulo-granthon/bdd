@@ -167,15 +167,18 @@ clusterdb.funcionarios;"`): os dados continuam lá. Suba o nó de volta com
 
 ## Provas para anexar
 
-A saída destes comandos é a validação do exercício, é isso que se captura e anexa:
+A saída destes comandos é a validação do exercício, é isso que se captura e anexa
+(rode os passos de instalação antes; no N1 rode o `3.4` para popular a tabela):
 
 ```
-# MGM
-hostname -I && bash run 3.3
-# N1
-hostname -I && bash run 3.4
-# N2
-hostname -I && bash run 3.5
+# MGM: os dois data nodes connected
+hostname -I && ndb_mgm -e show
+
+# N1: os dados inseridos
+hostname -I && mysql -u root -e "SELECT * FROM clusterdb.funcionarios;"
+
+# N2: os mesmos dados (replicados)
+hostname -I && mysql -u root -e "SELECT * FROM clusterdb.funcionarios;"
 ```
 
 (`hostname -I` mostra o IP da VM junto da saída, identificando a máquina.)
