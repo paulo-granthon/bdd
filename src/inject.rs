@@ -131,12 +131,25 @@ fn have(cmd: &str) -> bool {
 }
 
 fn host_ips() -> Vec<String> {
-    let out = Command::new("hostname").arg("-I").output();
     let mut v = Vec::new();
-    if let Ok(o) = out {
-        for t in String::from_utf8_lossy(&o.stdout).split_whitespace() {
-            if t.contains('.') {
-                v.push(t.to_string());
+    // `ip` funciona em qualquer distro; `hostname -I` não existe no inetutils (Arch).
+    if let Ok(o) = Command::new("ip").args(["-o", "-4", "addr", "show", "scope", "global"]).output() {
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            if let Some(cidr) = line.split_whitespace().nth(3) {
+                if let Some(ip) = cidr.split('/').next() {
+                    if !ip.starts_with("127.") {
+                        v.push(ip.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if v.is_empty() {
+        if let Ok(o) = Command::new("hostname").arg("-I").output() {
+            for t in String::from_utf8_lossy(&o.stdout).split_whitespace() {
+                if t.contains('.') && !t.starts_with("127.") {
+                    v.push(t.to_string());
+                }
             }
         }
     }
