@@ -1,145 +1,150 @@
-# Scripts de automação - Projeto de Banco de Dados Distribuídos (FATEC-SJC)
+# bdd - Projeto de Banco de Dados Distribuídos (FATEC-SJC)
 
-Este repositório automatiza os passos dos exercícios da disciplina, para não
-precisar digitar todos os comandos na mão dentro das máquinas virtuais.
+`bdd` é um programa de linha de comando que executa os passos dos exercícios da
+disciplina dentro das máquinas virtuais, no lugar de você digitar os comandos na
+mão. Ele também sabe qual máquina é qual, registra o que já foi feito e diz
+sempre qual é o próximo passo.
 
-Cada exercício tem o seu diretório. Dentro dele ficam os scripts daquele
-exercício, numerados na ordem em que devem ser executados.
+É um binário único, estático (não depende de nada instalado na VM). Depois de
+instalado, você usa de qualquer lugar: `bdd 3.1`, `bdd next`, `bdd log`, etc.
 
 ## As máquinas
 
-O ambiente (montado no EX02) tem três VMs:
+O cluster tem três VMs (montadas no EX02):
 
-| Máquina | Papel                  | IP (rede interna) |
-|---------|------------------------|-------------------|
-| MGM     | Gerenciador do cluster | 192.168.1.1       |
-| N1      | Nó de dados 1          | 192.168.1.2       |
-| N2      | Nó de dados 2          | 192.168.1.3       |
+| Papel | IP interno   | Função |
+|-------|--------------|--------|
+| MGM   | 192.168.1.1  | Gerenciador do cluster |
+| N1    | 192.168.1.2  | Nó de dados 1 |
+| N2    | 192.168.1.3  | Nó de dados 2 |
 
-## Convenção de nomes
+Cada VM tem duas placas de rede (EX02): uma em **bridge** (DHCP, é por ela que o
+host alcança a VM por SSH) e uma **interna** com o IP estático acima.
 
-```
-<ordem>_<máquina>_<o-que-faz>.bash
-```
+## Como instalar
 
-- **ordem**: 01, 02, 03 ... ordem de execução dentro do exercício.
-- **máquina**: onde rodar o script. Pode ser `MGM`, `N1`, `N2` ou `N1-N2`
-  (este último significa "rode o mesmo script nos dois nós de dados").
-- **o-que-faz**: descrição curta.
+Duas opções. A primeira não exige digitar nada dentro da VM.
 
-## Como usar
+### Opção A (recomendada): injetar do host via SSH
 
-### Jeito fácil: o script `run`
+Roda no **seu computador (host)**, não na VM. O host baixa o binário e instala
+em cada VM por SSH. Funciona assim que as VMs estão ligadas com OpenSSH (vem do
+EX02), mesmo antes de configurar os IPs internos.
 
-Baixe só o `run` uma vez em cada máquina e chame os passos por número
-(`<exercício>.<passo>`). O `run` acha o script certo: usa o arquivo local se o
-repositório estiver clonado, ou baixa do GitHub se você só pegou o `run`.
-
-```
-wget https://raw.githubusercontent.com/paulo-granthon/bdd/main/run -O run
-```
-
-> Atenção: use **`-O run`** (O maiúsculo) para salvar o arquivo. Com `-o run`
-> (o minúsculo) o wget grava só o *log* dele no arquivo, e o `run` sai **vazio**
-> (rodar um arquivo vazio não faz nada). Para conferir que baixou certo:
-> `head -1 run` deve mostrar `#!/usr/bin/env bash`.
-
-Depois, rode cada passo **na máquina indicada**:
-
-```
-bash run 3.1     # MGM:     instala o gerenciador
-bash run 3.2     # N1 e N2: instala o nó de dados (rode nas duas)
-bash run 3.3     # MGM:     verifica o cluster
-bash run 3.4     # N1:      cria banco e insere
-bash run 3.5     # N2:      verifica a replicação
-```
-
-Ou tudo em uma linha só (baixa e executa, sem salvar arquivo):
-
-```
-wget -qO- https://raw.githubusercontent.com/paulo-granthon/bdd/main/run | bash -s 3.1
-```
-
-Aqui o `-O-` (com hífen, mandando para a saída padrão) é o certo, e o `|` joga
-no `bash`. Não troque por `-o`.
-
-### Jeito manual: baixar o script direto
-
-```
-wget https://raw.githubusercontent.com/paulo-granthon/bdd/main/EX03/01_MGM_instala-gerenciador.bash -O script.bash
-bash script.bash
-```
-
-### Ou clonar o repositório
+Pré-requisitos no host: `ssh`, `scp`, `sshpass` e `curl` ou `wget`.
 
 ```
 git clone https://github.com/paulo-granthon/bdd.git
 cd bdd
-bash run 3.1                              # na MGM
-# ou direto:
-bash EX03/01_MGM_instala-gerenciador.bash # na MGM
+./inject.sh
 ```
 
-Os scripts pedem privilégio de root automaticamente (re-executam com `sudo`),
-então basta chamar com `bash`.
+O `inject.sh`:
 
-## Segurança / progresso parcial
+1. procura as VMs na sua rede (hosts com SSH aberto);
+2. mostra a lista numerada; você marca qual é o **MGM**, qual é o **N1** e qual é
+   o **N2** (pode marcar menos de três);
+3. para cada uma, pede usuário e senha do SSH (re-pergunta se errar);
+4. copia o binário, instala em `/usr/local/bin/bdd` e já define o papel da
+   máquina (`bdd id`).
 
-Os scripts são **idempotentes**: podem ser rodados de novo sem quebrar. Eles
-checam o que já existe (diretórios, usuários, pacotes, binários, serviços) e só
-fazem o que falta. Como não dá para adivinhar "onde você parou", cada script se
-vira sozinho com o que encontrar na máquina. Cada passo anuncia o que está
-fazendo, então dá para ver na tela onde parou se algo der errado.
+Pronto: `bdd` está em todas, cada uma já sabe quem é.
 
-## Pré-requisitos
+### Opção B: instalar na própria VM (on-box)
 
-- Ambiente de rede do EX02 pronto (as três VMs se enxergam por `ping`).
-- Acesso à internet nas VMs (download do MySQL Cluster e pacotes `apt`).
-- Ubuntu 16.04 (alvo dos exercícios), MySQL Cluster 7.3.26.
+Dentro da VM. Tente primeiro a linha curta; se der erro de SSL, use a de baixo
+(o `wget` velho do Ubuntu 16.04 às vezes falha o TLS; o `curl` resolve).
 
-## EX03 - Instalação do MySQL Cluster
+```
+wget -qO- paulo-granthon.github.io/bdd | sh
+```
 
-Ordem de execução:
+```
+sudo apt-get install -y curl && curl -L paulo-granthon.github.io/bdd | sh
+```
 
-| Ordem | Máquina | Script                                | O que faz |
-|-------|---------|---------------------------------------|-----------|
-| 01    | MGM     | `01_MGM_instala-gerenciador.bash`     | Instala ndb_mgm/ndb_mgmd, cria o config.ini, sobe o gerenciador e habilita no boot |
-| 02    | N1 e N2 | `02_N1-N2_instala-no-de-dados.bash`   | Instala o MySQL Cluster como nó de dados, cria o my.cnf, sobe o ndbd e o mysqld |
-| 03    | MGM     | `03_MGM_verifica-cluster.bash`        | Mostra os nós conectados (`ndb_mgm -e show`) |
-| 04    | N1      | `04_N1_cria-banco-e-insere.bash`      | Cria banco + tabela NDBCLUSTER e insere dados |
-| 05    | N2      | `05_N2_verifica-replicacao.bash`      | Confirma que os dados criados no N1 aparecem no N2 |
+Depois, diga qual máquina é esta:
 
-Rode o **02** nas duas máquinas de dados (N1 e N2). O gerenciador (passo 01)
-precisa estar no ar antes dos nós de dados subirem (passo 02).
+```
+bdd id
+```
 
-## Solução de problemas
+## Como funciona (arquitetura)
 
-- **O `run` (ou o arquivo baixado) não faz nada / sai vazio.** Você provavelmente
-  salvou com `-o` no lugar de `-O`. Confira com `head -1 run`; se não aparecer
-  `#!/usr/bin/env bash`, baixe de novo usando `-O run`.
+- **Binário Rust estático (musl)**, sem dependências de runtime, então roda no
+  Ubuntu 16.04 das VMs sem instalar mais nada.
+- Os **scripts dos passos** (bash) ficam **embutidos** no binário. `bdd 3.1`
+  extrai e executa o script certo. Depois de instalado, não precisa baixar mais
+  nada (bom para a rede instável das VMs).
+- **CI/CD**: cada push na `main` compila o binário e publica numa release
+  `latest` no GitHub; o instalador (`install.sh`) é servido pelo GitHub Pages em
+  `paulo-granthon.github.io/bdd`.
+- **Estado** em `/var/lib/bdd/state`: o que já rodou e o que já validou. Por isso
+  você pode fechar a sessão e voltar depois que o `bdd` sabe onde parou.
+- **Identidade da máquina**: detectada pelo IP interno (`192.168.1.x`) definido
+  no EX02. Enquanto esse IP não existe, você diz o papel com `bdd id`. Quando o
+  IP passa a existir, ele manda (sobrepõe o que você definiu na mão).
 
-- **`Unable to establish SSL connection` no wget (mas o `ping` funciona).** O
-  `wget` do Ubuntu 16.04 usa GnuTLS antigo, que às vezes não fecha o TLS com o
-  GitHub. O `curl` (OpenSSL) costuma funcionar. Instale o curl (o `apt` usa http,
-  então funciona mesmo com o TLS quebrado) e baixe com ele:
+## Comandos
 
-  ```
-  sudo apt-get update && sudo apt-get install -y curl ca-certificates
-  curl -fsSL https://raw.githubusercontent.com/paulo-granthon/bdd/main/run -o run
-  ```
+| Comando | O que faz |
+|---------|-----------|
+| `bdd X.Y` | executa o passo Y do exercício X nesta máquina (ex: `bdd 3.1`) |
+| `bdd log` | lista todos os passos, coloridos por estado, com legenda |
+| `bdd next` | mostra só o próximo passo, e se é nesta máquina ou em outra |
+| `bdd ok` | marca o próximo passo como feito (quando ele é de **outra** máquina) |
+| `bdd check` | roda as validações e diz, por severidade, o que está pendente |
+| `bdd id` | mostra/define qual máquina é esta (`bdd id` interativo, `bdd id mgm` direto) |
 
-  Com o curl instalado, os próprios scripts já caem para o curl sozinhos nos
-  downloads. Alternativas: `wget --secure-protocol=TLSv1_2 <url>`, ou conferir o
-  relógio da VM (`date`; TLS depende da hora certa). Como o N2 já funcionou, dá
-  também para servir os arquivos do N2 para o N1 pela rede interna (sem TLS):
-  no N2 `python3 -m http.server 8000` (ou `python -m SimpleHTTPServer 8000`) e no
-  N1 `wget http://192.168.1.3:8000/run -O run`.
+Depois de qualquer comando, o `bdd` imprime o **próximo passo** a executar.
 
-- **`E: Unable to lock /var/lib/apt/...` ou `Could not get lock`.** Logo após o
-  boot, o próprio Ubuntu roda atualizações (`apt-daily`/`unattended-upgrades`) e
-  segura o `apt`. O passo 02 já espera o lock liberar e tenta de novo sozinho por
-  alguns minutos. Se rodou algum `apt` na mão, é só esperar 1-2 min e rodar de novo.
+### O ponteiro `next` e o `ok`
 
-- **`ndbd` não conecta / `ndb_mgm -e show` mostra nó desconectado.** Garanta que o
-  passo 3.1 (gerenciador, na MGM) rodou e está no ar antes do 3.2 (nós de dados),
-  e que as três VMs se enxergam por `ping` (rede do EX02).
+`next` é sempre a próxima coisa a fazer. Ele anda sozinho:
+
+- se o próximo passo é **desta** máquina, você roda `bdd X.Y` aqui e o `next`
+  avança;
+- se o próximo é de **outra** máquina, você roda lá e, de volta aqui, faz
+  `bdd ok` para o `next` avançar (o `ok` recusa se o próximo for desta máquina,
+  justamente para você não pular um passo seu).
+
+### Cores do `log` / `check`
+
+- verde + `✓`: feito;
+- ciano + `←`: próximo, nesta máquina;
+- amarelo + `←`: próximo, em outra máquina;
+- vermelho apagado: não roda nesta máquina;
+- azul: assumido feito (já passamos dele);
+- apagado: ainda não feito.
+
+No `check`, falhas ganham severidade: amarelo `●` (passo atual, ainda em
+andamento), vermelho `✗` (passo que já deveria estar pronto) e vermelho escuro
+`✗!` (passo concluído depois de um incompleto, ordem furada).
+
+## Exercícios
+
+| Exercício | Conteúdo | Detalhes |
+|-----------|----------|----------|
+| EX02 | Rede das VMs (IP interno + hostname + ping) | [EX02/README.md](EX02/README.md) |
+| EX03 | Instalação do MySQL Cluster | [EX03/README.md](EX03/README.md) |
+
+Cada exercício tem o seu README com o estado antes/depois, o que ele faz, como
+testar e o que capturar como prova.
+
+## Desenvolvimento
+
+Binário em Rust (`src/`), só biblioteca padrão, sem crates externos. Build local:
+
+```
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+Os passos ficam em `EX0N/*.bash` e são embutidos via `include_str!` em
+`src/model.rs` (que também guarda papel da máquina e o comando de validação de
+cada passo).
+
+O workflow `.github/workflows/release.yml` compila e publica a release `latest` a
+cada push na `main`, e serve o `install.sh` pelo GitHub Pages. Para a Opção B de
+instalação funcionar, habilite o Pages uma vez em Settings > Pages > Source:
+GitHub Actions. A Opção A (inject pelo host) não depende do Pages.

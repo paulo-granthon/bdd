@@ -8,9 +8,9 @@ replicação automática dos dados entre os nós.
 Depois de instalar (passos `3.1` na MGM e `3.2` no N1 e no N2):
 
 ```
-bash run 3.3   # na MGM: deve listar N1 e N2 conectados
-bash run 3.4   # no N1:  cria e insere; deve mostrar Ana, Bruno, Carla
-bash run 3.5   # no N2:  deve mostrar os MESMOS Ana, Bruno, Carla (replicou)
+bdd 3.3   # na MGM: deve listar N1 e N2 conectados
+bdd 3.4   # no N1:  cria e insere; deve mostrar Ana, Bruno, Carla
+bdd 3.5   # no N2:  deve mostrar os MESMOS Ana, Bruno, Carla (replicou)
 ```
 
 Passou se: o `3.3` mostra os dois data nodes conectados e o `3.5` (no N2) lista
@@ -97,7 +97,7 @@ dados, `3.3`/`3.4`/`3.5` verificam e testam a replicação.
 ### 1. Os nós estão todos conectados? (na MGM)
 
 ```
-bash run 3.3
+bdd 3.3
 ```
 
 Roda `ndb_mgm -e show`. Esperado: os dois `[ndbd]` aparecem **connected** (com
@@ -125,7 +125,7 @@ máquina e que o gerenciador (`3.1`) subiu antes.
 No **N1**:
 
 ```
-bash run 3.4
+bdd 3.4
 ```
 
 Cria o banco `clusterdb`, a tabela `funcionarios` (`ENGINE=NDBCLUSTER`), insere
@@ -144,7 +144,7 @@ Cria o banco `clusterdb`, a tabela `funcionarios` (`ENGINE=NDBCLUSTER`), insere
 No **N2**:
 
 ```
-bash run 3.5
+bdd 3.5
 ```
 
 Sem inserir nada, só lê. Passou se aparecerem **as mesmas** Ana/Bruno/Carla:
@@ -154,9 +154,9 @@ foram escritas no N1 e replicadas para o N2 pelo NDB.
 
 Com `NoOfReplicas=2`, derrubar um data node não perde dado. No **N2** pare o
 `ndbd` (`sudo /etc/init.d/ndbd stop` ou mate o processo) e, no N1, rode de novo
-a leitura (`bash run 3.4` mostra o SELECT, ou `mysql -u root -e "SELECT * FROM
+a leitura (`bdd 3.4` mostra o SELECT, ou `mysql -u root -e "SELECT * FROM
 clusterdb.funcionarios;"`): os dados continuam lá. Suba o nó de volta com
-`bash run 3.2` (ou `sudo /etc/init.d/ndbd start`) e ele ressincroniza.
+`bdd 3.2` (ou `sudo /etc/init.d/ndbd start`) e ele ressincroniza.
 
 ### Checklist
 
