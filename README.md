@@ -178,9 +178,16 @@ cada passo. Não afeta a rede do cluster nem o resultado dos exercícios.
 |-----------|----------|----------|
 | EX02 | Rede das VMs (IP interno + hostname + ping) | [EX02/README.md](EX02/README.md) |
 | EX03 | Instalação do MySQL Cluster | [EX03/README.md](EX03/README.md) |
+| EX04 | Uso do cluster em estados degradados (nó/MGM off) | [EX04/README.md](EX04/README.md) |
+| EX05 | Fragmentação horizontal (PARTITION BY KEY) | [EX05/README.md](EX05/README.md) |
+| EX08 | Cassandra (cluster multi-node, OVA separada) | [EX08/README.md](EX08/README.md) |
 
 Cada exercício tem o seu README com o estado antes/depois, o que ele faz, como
 testar e o que capturar como prova.
+
+EX01 (teoria de replicação/fragmentação) e EX06/EX07 (programas de
+criptografia/socket no host) não são passos de cluster, então não fazem parte do
+`bdd`; foram entregues como PDFs em `Resolvidos/`.
 
 ## Desenvolvimento
 

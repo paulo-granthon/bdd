@@ -129,7 +129,72 @@ pub fn manifest() -> Vec<Step> {
             validate: "mysql -u root -Nse 'SELECT count(*) FROM clusterdb.funcionarios' 2>/dev/null | grep -q '^3$'",
             proof: "mysql -u root -e 'SELECT * FROM clusterdb.funcionarios;'",
         },
+        // ---- EX04: uso do cluster em estados degradados (observacional) ----
+        ex04(1, N1, "Inserir no N1 com o N2 desligado"),
+        ex04(2, N1, "Inserir no N1 com o MGM desligado"),
+        ex04(3, N1, "Criar tabela no N1 com o N2 desligado"),
+        ex04(4, N1, "Criar tabela no N1 com o MGM desligado"),
+        ex04(5, N1, "Criar database no N1 com o N2 desligado"),
+        ex04(6, N1, "Criar database no N1 com o MGM desligado"),
+        ex04(7, N1, "Inserir no N1 com todo o resto desligado"),
+        ex04(8, N2, "Criar tabela no N2 com todo o resto desligado"),
+        ex04(9, N2, "Criar database no N2 com todo o resto desligado"),
+        ex04(10, N1, "Inserir 1000 registros no N1 com o N2 desligado, depois religar o N2"),
+        ex04(11, MGM, "Descrever a necessidade do MGM"),
+        // ---- EX05: fragmentação horizontal ----
+        Step {
+            ex: 5, st: 1, roles: N1,
+            title: "Criar tabela ALUNO particionada (PARTITION BY KEY) e inserir 15 registros",
+            script: include_str!("../EX05/01_N1_cria-tabela-particionada.bash"),
+            validate: "c=$(mysql -u root -Nse 'SELECT COUNT(*) FROM clusterdb.aluno' 2>/dev/null); [ \"${c:-0}\" -ge 15 ]",
+            proof: "mysql -u root -e 'SELECT * FROM clusterdb.aluno;'",
+        },
+        Step {
+            ex: 5, st: 2, roles: N1,
+            title: "Ver a distribuição dos registros entre as partições",
+            script: include_str!("../EX05/02_N1_distribuicao-particoes.bash"),
+            validate: "c=$(mysql -u root -Nse 'SELECT COUNT(*) FROM clusterdb.aluno' 2>/dev/null); [ \"${c:-0}\" -ge 15 ]",
+            proof: r#"mysql -u root -e "SELECT partition_name, table_rows FROM information_schema.PARTITIONS WHERE table_schema='clusterdb' AND table_name='aluno';""#,
+        },
+        // ---- EX08: Cassandra (cluster separado; node1=.1 seed=MGM, node2=.2=N1, node3=.3=N2) ----
+        Step {
+            ex: 8, st: 1, roles: ALL,
+            title: "Configurar rede interna + hostname (node1/node2/node3)",
+            script: include_str!("../EX08/01_ALL_configura-rede.bash"),
+            validate: r#"case "${BDD_ROLE:-}" in mgm) E=192.168.1.1;; n1) E=192.168.1.2;; n2) E=192.168.1.3;; *) exit 1;; esac; ip -4 addr 2>/dev/null | grep -q "inet ${E}/""#,
+            proof: "hostname; ip -4 addr show enp0s8 2>/dev/null | grep -w inet",
+        },
+        Step {
+            ex: 8, st: 2, roles: ALL,
+            title: "Configurar o cassandra.yaml e subir o serviço (node1 primeiro)",
+            script: include_str!("../EX08/02_ALL_configura-cassandra.bash"),
+            validate: "nodetool status >/dev/null 2>&1",
+            proof: "nodetool status",
+        },
+        ex08(3, MGM, "Verificar o cluster (nodetool status, 3 nós UN)", "n=$(nodetool status 2>/dev/null | grep -c '^UN'); [ \"${n:-0}\" -ge 3 ]", "nodetool status"),
+        ex08(4, MGM, "Criar keyspace (RF=3), tabela e inserir dados", "cqlsh 192.168.1.1 -e 'SELECT count(*) FROM classe.aluno;' 2>/dev/null | grep -qE '[1-9]'", "cqlsh 192.168.1.1 -e 'SELECT * FROM classe.aluno;'"),
+        ex08(5, N1, "Verificar a replicação lendo no node2", "cqlsh 192.168.1.2 -e 'SELECT count(*) FROM classe.aluno;' 2>/dev/null | grep -qE '[1-9]'", "cqlsh 192.168.1.2 -e 'SELECT * FROM classe.aluno;'"),
+        ex08(6, N2, "Verificar a replicação lendo no node3", "cqlsh 192.168.1.3 -e 'SELECT count(*) FROM classe.aluno;' 2>/dev/null | grep -qE '[1-9]'", "cqlsh 192.168.1.3 -e 'SELECT * FROM classe.aluno;'"),
+        ex08(7, MGM, "Testar a consistência (QUORUM vs ONE com nós off)", "true", ""),
     ]
+}
+
+fn ex04(st: u8, roles: &'static [Role], title: &'static str) -> Step {
+    Step {
+        ex: 4, st, roles, title,
+        script: include_str!("../EX04/cenarios.bash"),
+        validate: "true", // observacional: roda o cenário e imprime a análise
+        proof: "",
+    }
+}
+
+fn ex08(st: u8, roles: &'static [Role], title: &'static str, validate: &'static str, proof: &'static str) -> Step {
+    Step {
+        ex: 8, st, roles, title,
+        script: include_str!("../EX08/cassandra-uso.bash"),
+        validate,
+        proof,
+    }
 }
 
 /// Números dos exercícios em ordem.

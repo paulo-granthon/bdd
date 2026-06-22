@@ -145,7 +145,7 @@ fn exec_step(step: &Step, role: Role, steps: &[Step]) {
         "{}",
         ui::paint(ui::BOLD, &format!("== bdd {}  ({})  [{}] ==", id, step.title, role.name()))
     );
-    let ok = run_script(step.script, role);
+    let ok = run_script(step.script, role, &id);
     let mut st = State::load();
     if ok {
         st.mark_ran(&id);
@@ -183,7 +183,7 @@ fn first_pending_in_ex(steps: &[Step], st: &State, ex: u8) -> Option<usize> {
     steps.iter().position(|s| s.ex == ex && !st.has_ran(&s.id()))
 }
 
-fn run_script(script: &str, role: Role) -> bool {
+fn run_script(script: &str, role: Role, id: &str) -> bool {
     let mut path = std::env::temp_dir();
     path.push(format!("bdd-step-{}.sh", std::process::id()));
     if std::fs::write(&path, script).is_err() {
@@ -193,6 +193,7 @@ fn run_script(script: &str, role: Role) -> bool {
     let status = Command::new("bash")
         .arg(&path)
         .env("BDD_ROLE", role.code())
+        .env("BDD_STEP", id)
         .status();
     let _ = std::fs::remove_file(&path);
     matches!(status, Ok(s) if s.success())
@@ -545,6 +546,7 @@ fn run_validation(s: &Step, role: Role) -> bool {
         .arg("-c")
         .arg(s.validate)
         .env("BDD_ROLE", role.code())
+        .env("BDD_STEP", &s.id())
         .status();
     matches!(status, Ok(st) if st.success())
 }
@@ -615,7 +617,7 @@ fn cmd_validate() {
     for s in steps.iter().filter(|s| s.ex == ex && s.for_role(role) && !s.proof.is_empty()) {
         any = true;
         println!("{}", ui::paint(ui::BOLD, &format!("--- {} {} ---", s.id(), s.title)));
-        let _ = Command::new("bash").arg("-c").arg(s.proof).env("BDD_ROLE", role.code()).status();
+        let _ = Command::new("bash").arg("-c").arg(s.proof).env("BDD_ROLE", role.code()).env("BDD_STEP", &s.id()).status();
         println!();
     }
     if !any {
