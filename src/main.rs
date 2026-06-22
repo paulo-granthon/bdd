@@ -23,6 +23,8 @@ fn main() {
         "next" => cmd_next(),
         "ok" => cmd_ok(),
         "check" => cmd_check(),
+        "validate" | "validar" => cmd_validate(),
+        "run" => cmd_run_next(),
         "id" => cmd_id(args.get(1).map(|s| s.as_str())),
         "inject" => inject::run(),
         s if is_step_id(s) => cmd_run(s),
@@ -45,8 +47,10 @@ fn usage() {
     println!("Uso: bdd <comando>");
     println!();
     println!("  bdd X.Y     executa o passo Y do exercício X (ex: bdd 3.1)");
+    println!("  bdd run     executa o próximo passo, se for desta máquina (sem digitar o número)");
     println!("  bdd log     lista todos os passos e o estado de cada um");
     println!("  bdd next    mostra o próximo passo a executar");
+    println!("  bdd validate  imprime as provas (saída) do exercício atual, para capturar");
     println!("  bdd ok      marca o próximo passo como feito (passo de OUTRA máquina)");
     println!("  bdd check   valida a máquina, adota o que já está pronto e ajusta o next");
     println!("  bdd id      mostra/define qual máquina é esta (MGM/N1/N2)");
@@ -132,6 +136,11 @@ fn cmd_run(id: &str) {
         std::process::exit(1);
     }
 
+    exec_step(step, role, &steps);
+}
+
+fn exec_step(step: &Step, role: Role, steps: &[Step]) {
+    let id = step.id();
     println!(
         "{}",
         ui::paint(ui::BOLD, &format!("== bdd {}  ({})  [{}] ==", id, step.title, role.name()))
@@ -139,9 +148,9 @@ fn cmd_run(id: &str) {
     let ok = run_script(step.script, role);
     let mut st = State::load();
     if ok {
-        st.mark_ran(id);
+        st.mark_ran(&id);
         println!("{}", ui::paint(ui::GREEN, &format!("{} passo {} concluído.", ui::CHECK, id)));
-        hint_after_run(&steps, &st);
+        hint_after_run(steps, &st);
     } else {
         eprintln!("{}", ui::paint(ui::RED, &format!("{} passo {} falhou.", ui::CROSS, id)));
         ui::proximo(&[
@@ -150,6 +159,28 @@ fn cmd_run(id: &str) {
         ]);
         std::process::exit(1);
     }
+}
+
+// ----------------------------------------------------------------- exercícios
+
+fn all_ran_ex(steps: &[Step], st: &State, ex: u8) -> bool {
+    steps.iter().filter(|s| s.ex == ex).all(|s| st.has_ran(&s.id()))
+}
+fn ex_validated(st: &State, ex: u8) -> bool {
+    st.validated.iter().any(|v| v == &ex.to_string())
+}
+/// Primeiro exercício que ainda não está (todo feito E validado).
+fn current_exercise(steps: &[Step], st: &State) -> Option<u8> {
+    for ex in model::exercises(steps) {
+        if !(all_ran_ex(steps, st, ex) && ex_validated(st, ex)) {
+            return Some(ex);
+        }
+    }
+    None
+}
+/// Índice do primeiro passo não feito dentro do exercício.
+fn first_pending_in_ex(steps: &[Step], st: &State, ex: u8) -> Option<usize> {
+    steps.iter().position(|s| s.ex == ex && !st.has_ran(&s.id()))
 }
 
 fn run_script(script: &str, role: Role) -> bool {
@@ -194,36 +225,45 @@ fn cmd_next() {
     let (role, _) = current_role();
     println!(
         "{}",
-        ui::paint(ui::DIM, "`next` é sempre a próxima coisa a fazer; ele anda sozinho conforme você executa os passos.")
+        ui::paint(ui::DIM, "`next` é sempre a próxima coisa a fazer; ele anda sozinho conforme você avança.")
     );
-    match next_step(&steps, &st) {
+    let ex = match current_exercise(&steps, &st) {
         None => {
-            println!("{}", ui::paint(ui::GREEN, &format!("{} nada pendente, tudo feito.", ui::CHECK)));
+            println!("{}", ui::paint(ui::GREEN, &format!("{} tudo feito e validado.", ui::CHECK)));
+            ui::proximo(&["(opcional) reimprimir as provas: bdd validate".to_string()]);
+            return;
         }
+        Some(ex) => ex,
+    };
+
+    match first_pending_in_ex(&steps, &st, ex) {
+        // ainda há passo a fazer no exercício atual
         Some(i) => {
             let n = &steps[i];
             let mine = role.map(|r| n.for_role(r)).unwrap_or(false);
             if mine {
-                println!(
-                    "{}",
-                    ui::paint(ui::CYAN, &format!("{} {}  {}  (nesta máquina, {})", n.id(), ui::ARROW, n.title, role.unwrap().name()))
-                );
-                ui::proximo(&[format!("rode: bdd {}  (ao rodar, `next` avança sozinho)", n.id())]);
+                println!("{}", ui::paint(ui::CYAN, &format!("{} {}  {}  (nesta máquina, {})", n.id(), ui::ARROW, n.title, role.unwrap().name())));
+                ui::proximo(&[format!("rode: bdd run   (ou bdd {})", n.id())]);
             } else {
                 let m = n.machines_label();
-                println!(
-                    "{}",
-                    ui::paint(ui::YELLOW, &format!("{} {}  {}  (na máquina {}, não nesta {})", n.id(), ui::ARROW, n.title, m, role.map(|r| r.name()).unwrap_or("?")))
-                );
+                println!("{}", ui::paint(ui::YELLOW, &format!("{} {}  {}  (na máquina {}, não nesta {})", n.id(), ui::ARROW, n.title, m, role.map(|r| r.name()).unwrap_or("?"))));
                 if role.is_none() {
                     ui::proximo(&["esta máquina não tem papel; defina: bdd id".to_string()]);
                 } else {
                     ui::proximo(&[
-                        format!("rode `bdd {}` na máquina {}", n.id(), m),
+                        format!("rode na máquina {}", m),
                         "depois, aqui, marque como feito: bdd ok".to_string(),
                     ]);
                 }
             }
+        }
+        // exercício todo feito, falta validar para fechá-lo
+        None => {
+            println!("{}", ui::paint(ui::CYAN, &format!("EX0{} concluído. Falta gerar as provas para fechar o exercício.", ex)));
+            ui::proximo(&[
+                "gere/imprima as provas: bdd validate".to_string(),
+                "(depois) veja o próximo exercício: bdd next".to_string(),
+            ]);
         }
     }
 }
@@ -432,28 +472,48 @@ fn cmd_check() {
     let next_idx = next_step(&steps, &st).unwrap_or(steps.len());
     let last_ran = steps.iter().enumerate().rev().find(|(_, s)| st.has_ran(&s.id())).map(|(i, _)| i);
 
+    let cur_ex = current_exercise(&steps, &st);
     let mut high_plus = false;
-    for (i, s) in steps.iter().enumerate() {
-        let id = s.id();
+
+    // linha de um passo (usada quando o exercício é expandido)
+    let step_line = |i: usize, s: &Step| -> String {
         if !s.for_role(role) {
-            if st.has_ran(&id) {
-                // confirmado via `bdd ok` (rodou em outra máquina)
-                println!("{}", ui::paint(ui::GREEN, &format!("  {} {}  feito em outra máquina ({}): {}", id, ui::CHECK, s.machines_label(), s.title)));
+            if st.has_ran(&s.id()) {
+                ui::paint(ui::GREEN, &format!("  {} {}  feito em outra máquina ({}): {}", s.id(), ui::CHECK, s.machines_label(), s.title))
             } else {
-                println!("{}", ui::paint(ui::FADED, &format!("  {}  n/a (máquina {}): {}", id, s.machines_label(), s.title)));
+                ui::paint(ui::FADED, &format!("  {}  n/a (máquina {}): {}", s.id(), s.machines_label(), s.title))
             }
-            continue;
-        }
-        if passed[i] {
+        } else if passed[i] {
             let lab = if cached[i] { " (cache)" } else { "" };
-            println!("{}", ui::paint(ui::GREEN, &format!("  {} {}  passou{}: {}", id, ui::CHECK, lab, s.title)));
+            ui::paint(ui::GREEN, &format!("  {} {}  passou{}: {}", s.id(), ui::CHECK, lab, s.title))
         } else if last_ran.map(|li| i < li).unwrap_or(false) {
-            high_plus = true;
-            println!("{}", ui::paint(ui::DARK_RED, &format!("  {} {}{} FALHOU, incompleto antes de um passo já feito: {}", id, ui::CROSS, ui::BANG, s.title)));
+            ui::paint(ui::DARK_RED, &format!("  {} {}{} FALHOU, incompleto antes de um passo já feito: {}", s.id(), ui::CROSS, ui::BANG, s.title))
         } else if i == next_idx {
-            println!("{}", ui::paint(ui::YELLOW, &format!("  {} {} a fazer agora: {}", id, ui::BALL, s.title)));
+            ui::paint(ui::YELLOW, &format!("  {} {} a fazer agora: {}", s.id(), ui::BALL, s.title))
         } else {
-            println!("{}", ui::paint(ui::FADED, &format!("  {}  ainda não iniciado: {}", id, s.title)));
+            ui::paint(ui::FADED, &format!("  {}  ainda não iniciado: {}", s.id(), s.title))
+        }
+    };
+
+    for ex in model::exercises(&steps) {
+        let idxs: Vec<usize> = steps.iter().enumerate().filter(|(_, s)| s.ex == ex).map(|(i, _)| i).collect();
+        // problema = passo desta máquina que deveria estar pronto mas falhou (ordem furada)
+        let problem = idxs.iter().any(|&i| steps[i].for_role(role) && !passed[i] && last_ran.map(|li| i < li).unwrap_or(false));
+        if problem {
+            high_plus = true;
+        }
+        if cur_ex == Some(ex) || problem {
+            // expandido: passo a passo
+            println!("{}", ui::paint(ui::BOLD, &format!("EX0{}", ex)));
+            for &i in &idxs {
+                println!("{}", step_line(i, &steps[i]));
+            }
+        } else if cur_ex.map(|c| ex < c).unwrap_or(true) {
+            // exercício anterior, sem problemas: uma linha só
+            println!("{}", ui::paint(ui::GREEN, &format!("EX0{} {}  tudo certo", ex, ui::CHECK)));
+        } else {
+            // exercício futuro: uma linha só
+            println!("{}", ui::paint(ui::FADED, &format!("EX0{}  ainda não iniciado", ex)));
         }
     }
 
@@ -487,4 +547,87 @@ fn run_validation(s: &Step, role: Role) -> bool {
         .env("BDD_ROLE", role.code())
         .status();
     matches!(status, Ok(st) if st.success())
+}
+
+// ----------------------------------------------------------------- run (próximo)
+
+fn cmd_run_next() {
+    let steps = manifest();
+    let st = State::load();
+    let (role, _) = current_role();
+    let role = match role {
+        Some(r) => r,
+        None => {
+            eprintln!("{}", ui::paint(ui::RED, "Papel da máquina indefinido."));
+            ui::proximo(&["defina: bdd id".to_string()]);
+            return;
+        }
+    };
+    let ex = match current_exercise(&steps, &st) {
+        None => { println!("{}", ui::paint(ui::GREEN, "Tudo feito e validado.")); return; }
+        Some(ex) => ex,
+    };
+    match first_pending_in_ex(&steps, &st, ex) {
+        Some(i) => {
+            let n = &steps[i];
+            if n.for_role(role) {
+                exec_step(n, role, &steps);
+            } else {
+                eprintln!("{}", ui::paint(ui::YELLOW, &format!(
+                    "O próximo ({}) é da máquina {}, não desta ({}).", n.id(), n.machines_label(), role.name()
+                )));
+                ui::proximo(&[
+                    format!("rode na máquina {}", n.machines_label()),
+                    "quando rodar lá, aqui faça: bdd ok".to_string(),
+                ]);
+                std::process::exit(1);
+            }
+        }
+        None => {
+            // exercício todo feito, falta validar: roda a validação
+            cmd_validate();
+        }
+    }
+}
+
+// ----------------------------------------------------------------- validate
+
+fn cmd_validate() {
+    let steps = manifest();
+    let mut st = State::load();
+    let (role, _) = current_role();
+    let role = match role {
+        Some(r) => r,
+        None => {
+            eprintln!("{}", ui::paint(ui::RED, "Papel da máquina indefinido."));
+            ui::proximo(&["defina: bdd id".to_string()]);
+            return;
+        }
+    };
+    let exs = model::exercises(&steps);
+    let ex = current_exercise(&steps, &st).unwrap_or_else(|| *exs.last().unwrap());
+
+    ui::header(&format!("Provas do EX0{} (capture a saída abaixo)", ex));
+    let _ = Command::new("sh").arg("-c").arg("hostname -I").status();
+    println!();
+
+    let mut any = false;
+    for s in steps.iter().filter(|s| s.ex == ex && s.for_role(role) && !s.proof.is_empty()) {
+        any = true;
+        println!("{}", ui::paint(ui::BOLD, &format!("--- {} {} ---", s.id(), s.title)));
+        let _ = Command::new("bash").arg("-c").arg(s.proof).env("BDD_ROLE", role.code()).status();
+        println!();
+    }
+    if !any {
+        println!("{}", ui::paint(ui::FADED, "Nenhuma prova desta máquina neste exercício."));
+    }
+
+    if !ex_validated(&st, ex) {
+        st.validated.push(ex.to_string());
+        st.save();
+    }
+    ui::proximo(&[
+        "capture a saída acima como prova".to_string(),
+        "próximo passo / exercício: bdd next".to_string(),
+    ]);
 }

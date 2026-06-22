@@ -302,7 +302,7 @@ fn inject_one(ip: &str, role: Role, user: &str, pass: &str, exe: &str) -> bool {
         Err(_) => return false,
     }
     let remote = format!(
-        "echo '{p}' | sudo -S -p '' sh -c 'install -m 0755 /tmp/bdd /usr/local/bin/bdd && mkdir -p /var/lib/bdd && chmod 777 /var/lib/bdd && rm -f /tmp/bdd' && /usr/local/bin/bdd id {r} >/dev/null",
+        "echo '{p}' | sudo -S -p '' sh -c 'grep -qw \"$(hostname)\" /etc/hosts || echo \"127.0.1.1 $(hostname)\" >> /etc/hosts; install -m 0755 /tmp/bdd /usr/local/bin/bdd && mkdir -p /var/lib/bdd && chmod 777 /var/lib/bdd && rm -f /tmp/bdd' && /usr/local/bin/bdd id {r} >/dev/null",
         p = pass, r = role.code()
     );
     let ssh = Command::new("sshpass").args(["-p", pass]).arg("ssh").args(SSH_OPTS).arg(format!("{}@{}", user, ip)).arg(remote).output();

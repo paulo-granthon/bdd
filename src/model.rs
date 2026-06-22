@@ -50,6 +50,7 @@ pub struct Step {
     pub title: &'static str,
     pub script: &'static str,
     pub validate: &'static str,
+    pub proof: &'static str,
 }
 
 impl Step {
@@ -83,12 +84,14 @@ pub fn manifest() -> Vec<Step> {
             title: "Configurar rede interna (IP estático + hostname)",
             script: include_str!("../EX02/01_ALL_configura-rede.bash"),
             validate: r#"case "${BDD_ROLE:-}" in mgm) E=192.168.1.1;; n1) E=192.168.1.2;; n2) E=192.168.1.3;; *) exit 1;; esac; ip -4 addr 2>/dev/null | grep -q "inet ${E}/""#,
+            proof: "hostname; ip -4 addr show enp0s8 2>/dev/null | grep -w inet",
         },
         Step {
             ex: 2, st: 2, roles: ALL,
             title: "Verificar conectividade entre as máquinas (ping)",
             script: include_str!("../EX02/02_ALL_verifica-rede.bash"),
             validate: r#"case "${BDD_ROLE:-}" in mgm) P="192.168.1.2 192.168.1.3";; n1) P="192.168.1.1 192.168.1.3";; n2) P="192.168.1.1 192.168.1.2";; *) exit 1;; esac; for ip in $P; do ping -c1 -W2 "$ip" >/dev/null 2>&1 || exit 1; done"#,
+            proof: r#"case "${BDD_ROLE:-}" in mgm) P="192.168.1.2 192.168.1.3";; n1) P="192.168.1.1 192.168.1.3";; n2) P="192.168.1.1 192.168.1.2";; *) P="192.168.1.1 192.168.1.2 192.168.1.3";; esac; for ip in $P; do ping -c2 -W2 "$ip"; done"#,
         },
         // ---- EX03: MySQL Cluster ----
         Step {
@@ -96,32 +99,48 @@ pub fn manifest() -> Vec<Step> {
             title: "Instalar o gerenciador do cluster",
             script: include_str!("../EX03/01_MGM_instala-gerenciador.bash"),
             validate: "pgrep -x ndb_mgmd >/dev/null 2>&1",
+            proof: "ndb_mgm -e show",
         },
         Step {
             ex: 3, st: 2, roles: DATA,
             title: "Instalar o nó de dados (ndbd + mysqld)",
             script: include_str!("../EX03/02_N1-N2_instala-no-de-dados.bash"),
             validate: "pgrep -x ndbd >/dev/null 2>&1 && { pgrep -x mysqld >/dev/null 2>&1 || pgrep -x mysqld_safe >/dev/null 2>&1; }",
+            proof: "pgrep -al ndbd; pgrep -al mysqld 2>/dev/null || pgrep -al mysqld_safe",
         },
         Step {
             ex: 3, st: 3, roles: MGM,
             title: "Verificar o cluster (nós conectados)",
             script: include_str!("../EX03/03_MGM_verifica-cluster.bash"),
             validate: "n=$(ndb_mgm -e show 2>/dev/null | grep -cE '@192\\.168\\.1\\.[23] '); [ \"${n:-0}\" -ge 2 ]",
+            proof: "ndb_mgm -e show",
         },
         Step {
             ex: 3, st: 4, roles: N1,
             title: "Criar banco e inserir dados",
             script: include_str!("../EX03/04_N1_cria-banco-e-insere.bash"),
             validate: "mysql -u root -Nse 'SELECT count(*) FROM clusterdb.funcionarios' 2>/dev/null | grep -q '^3$'",
+            proof: "mysql -u root -e 'SELECT * FROM clusterdb.funcionarios;'",
         },
         Step {
             ex: 3, st: 5, roles: N2,
             title: "Verificar a replicação no N2",
             script: include_str!("../EX03/05_N2_verifica-replicacao.bash"),
             validate: "mysql -u root -Nse 'SELECT count(*) FROM clusterdb.funcionarios' 2>/dev/null | grep -q '^3$'",
+            proof: "mysql -u root -e 'SELECT * FROM clusterdb.funcionarios;'",
         },
     ]
+}
+
+/// Números dos exercícios em ordem.
+pub fn exercises(steps: &[Step]) -> Vec<u8> {
+    let mut v: Vec<u8> = Vec::new();
+    for s in steps {
+        if !v.contains(&s.ex) {
+            v.push(s.ex);
+        }
+    }
+    v
 }
 
 pub fn find<'a>(steps: &'a [Step], id: &str) -> Option<&'a Step> {

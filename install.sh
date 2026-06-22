@@ -33,6 +33,8 @@ done
 $SUDO install -m 0755 /tmp/bdd "$DEST"
 $SUDO mkdir -p /var/lib/bdd
 $SUDO chmod 777 /var/lib/bdd
+# evita o aviso 'sudo: unable to resolve host' nos passos seguintes
+$SUDO sh -c 'grep -qw "$(hostname)" /etc/hosts || echo "127.0.1.1 $(hostname)" >> /etc/hosts'
 rm -f /tmp/bdd
 
 echo "[bdd] instalado em ${DEST}"

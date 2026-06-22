@@ -8,6 +8,12 @@ sempre qual é o próximo passo.
 É um binário único, estático (não depende de nada instalado na VM). Depois de
 instalado, você usa de qualquer lugar: `bdd 3.1`, `bdd next`, `bdd log`, etc.
 
+> **Aviso.** O `bdd` **não é uma boa forma de aprender** os conceitos da
+> disciplina e **não testa o seu conhecimento** de jeito nenhum. Ele só
+> automatiza a execução para quem **já domina** o assunto e quer agilizar a
+> parte mecânica. Se a sua intenção é aprender ou se autoavaliar, **não use**.
+> Use por sua conta e risco e bom senso.
+
 ## As máquinas
 
 O cluster tem três VMs (montadas no EX02):
@@ -109,6 +115,8 @@ bdd id
 | Comando | O que faz |
 |---------|-----------|
 | `bdd X.Y` | executa o passo Y do exercício X nesta máquina (ex: `bdd 3.1`) |
+| `bdd run` | executa o próximo passo se for desta máquina (sem digitar o número) |
+| `bdd validate` | imprime as provas (saída dos comandos) do exercício atual, para capturar |
 | `bdd log` | lista todos os passos, coloridos por estado, com legenda |
 | `bdd next` | mostra só o próximo passo, e se é nesta máquina ou em outra |
 | `bdd ok` | marca o próximo passo como feito (quando ele é de **outra** máquina) |
@@ -155,6 +163,14 @@ antes de instalar o bdd:
 
 Faça isso em cada uma das três VMs. Passos que rodam em outra máquina você
 confirma depois com `bdd ok`.
+
+## Mudanças fora do escopo dos exercícios
+
+Para uma experiência mais limpa, o `bdd` faz **uma** alteração que os exercícios
+não pedem: na instalação (que já roda como root), ele garante uma linha
+`127.0.1.1 <hostname>` em `/etc/hosts`. Isso só serve para silenciar o aviso
+`sudo: unable to resolve host <hostname>` que apareceria no primeiro `sudo` de
+cada passo. Não afeta a rede do cluster nem o resultado dos exercícios.
 
 ## Exercícios
 
