@@ -155,8 +155,7 @@ pub fn run() {
     println!();
     println!("{}", ui::paint(ui::GREEN, "[inject] pronto."));
     ui::proximo(&[
-        "em cada VM: bdd check   (mostra o que já está pronto)".to_string(),
-        "depois:     bdd sync    (adota o progresso anterior)".to_string(),
+        "em cada VM: bdd check   (valida e ajusta onde você está)".to_string(),
         "e então:    bdd next    (mostra qual é o próximo passo)".to_string(),
     ]);
 }

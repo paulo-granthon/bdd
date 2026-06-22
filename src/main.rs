@@ -22,7 +22,6 @@ fn main() {
         "log" => cmd_log(),
         "next" => cmd_next(),
         "ok" => cmd_ok(),
-        "sync" => cmd_sync(),
         "check" => cmd_check(),
         "id" => cmd_id(args.get(1).map(|s| s.as_str())),
         "inject" => inject::run(),
@@ -49,8 +48,7 @@ fn usage() {
     println!("  bdd log     lista todos os passos e o estado de cada um");
     println!("  bdd next    mostra o próximo passo a executar");
     println!("  bdd ok      marca o próximo passo como feito (passo de OUTRA máquina)");
-    println!("  bdd sync    adota o progresso já feito (antes do bdd) checando a máquina");
-    println!("  bdd check   roda as validações e diz o que está pendente");
+    println!("  bdd check   valida a máquina, adota o que já está pronto e ajusta o next");
     println!("  bdd id      mostra/define qual máquina é esta (MGM/N1/N2)");
     println!("  bdd inject  (no HOST) instala o bdd nas VMs por SSH (TUI)");
     println!();
@@ -61,9 +59,8 @@ fn usage() {
         st.seen_intro = true;
         st.save();
         ui::proximo(&[
-            "veja o que já está pronto nesta máquina: bdd check".to_string(),
-            "adote o progresso já feito antes do bdd:  bdd sync".to_string(),
-            "e então, o próximo passo a executar:      bdd next".to_string(),
+            "veja o que já está pronto e ajuste o ponto: bdd check".to_string(),
+            "e então, o próximo passo a executar:        bdd next".to_string(),
         ]);
         return;
     }
@@ -391,54 +388,6 @@ fn legenda() {
     println!("  {}   ainda não feito", ui::paint(ui::FADED, "x.y"));
 }
 
-// ----------------------------------------------------------------- sync
-
-fn cmd_sync() {
-    let steps = manifest();
-    let mut st = State::load();
-    let (role, origin) = current_role();
-    let role = match role {
-        Some(r) => r,
-        None => {
-            eprintln!("{}", ui::paint(ui::RED, "Papel da máquina indefinido."));
-            ui::proximo(&["defina: bdd id".to_string()]);
-            return;
-        }
-    };
-
-    ui::header("Sincronizando com o estado real da máquina");
-    println!("Máquina: {} ({})", ui::paint(ui::BOLD, role.name()), origin);
-    println!("{}", ui::paint(ui::DIM, "Roda as validações e adota como feito os passos desta máquina que já passam."));
-    println!();
-
-    let mut adotados = 0;
-    for s in steps.iter() {
-        if !s.for_role(role) {
-            continue;
-        }
-        let id = s.id();
-        if st.has_ran(&id) {
-            continue;
-        }
-        if run_validation(s, role) {
-            st.mark_ran(&id);
-            st.mark_checked(&id);
-            adotados += 1;
-            println!("{}", ui::paint(ui::GREEN, &format!("  {} {}  adotado: {}", id, ui::CHECK, s.title)));
-        }
-    }
-
-    if adotados == 0 {
-        println!("{}", ui::paint(ui::FADED, "  nada novo a adotar (nenhum passo desta máquina passou que já não estivesse marcado)."));
-    }
-    println!();
-    println!("{}", ui::paint(ui::DIM, "Passos de OUTRAS máquinas não são adotados aqui; rode `bdd sync` em cada VM e use `bdd ok` para os de outra máquina."));
-    ui::proximo(&[
-        "veja onde você está: bdd log".to_string(),
-        "próximo passo: bdd next".to_string(),
-    ]);
-}
-
 // ----------------------------------------------------------------- check
 
 fn cmd_check() {
@@ -453,45 +402,51 @@ fn cmd_check() {
             return;
         }
     };
-    let next_idx = next_step(&steps, &st).unwrap_or(steps.len());
-    let last_ran_idx = steps.iter().enumerate().rev().find(|(_, s)| st.has_ran(&s.id())).map(|(i, _)| i);
 
     ui::header("Validação dos passos");
     println!("Máquina: {}", ui::paint(ui::BOLD, role.name()));
     println!();
 
-    let mut high_plus = false;
-    let mut high = false;
+    // 1) roda (ou usa cache) as validações desta máquina e ADOTA o que passou
+    //    como feito, para o `next` ficar correto.
+    let mut passed = vec![false; steps.len()];
+    let mut cached = vec![false; steps.len()];
+    for (i, s) in steps.iter().enumerate() {
+        if !s.for_role(role) {
+            continue;
+        }
+        let id = s.id();
+        if st.has_checked(&id) {
+            passed[i] = true;
+            cached[i] = true;
+        } else if run_validation(s, role) {
+            passed[i] = true;
+            st.mark_checked(&id);
+        }
+        if passed[i] {
+            st.mark_ran(&id);
+        }
+    }
 
+    // 2) recalcula next/last_ran já com as adoções
+    let next_idx = next_step(&steps, &st).unwrap_or(steps.len());
+    let last_ran = steps.iter().enumerate().rev().find(|(_, s)| st.has_ran(&s.id())).map(|(i, _)| i);
+
+    let mut high_plus = false;
     for (i, s) in steps.iter().enumerate() {
         let id = s.id();
-        let mine = s.for_role(role);
-        let before = i < next_idx;
-        let at = i == next_idx;
-
-        if !mine {
+        if !s.for_role(role) {
             println!("{}", ui::paint(ui::FADED, &format!("  {}  n/a (máquina {}): {}", id, s.machines_label(), s.title)));
             continue;
         }
-
-        let passed = if st.has_checked(&id) { true } else { run_validation(s, role) };
-
-        if passed {
-            if !st.has_checked(&id) {
-                st.mark_checked(&id);
-            }
-            println!("{}", ui::paint(ui::GREEN, &format!("  {} {}  passou: {}", id, ui::CHECK, s.title)));
-        } else if before {
-            let progrediu = last_ran_idx.map(|li| li > i).unwrap_or(false);
-            if progrediu {
-                high_plus = true;
-                println!("{}", ui::paint(ui::DARK_RED, &format!("  {} {}{} FALHOU, passo anterior incompleto e já avançamos: {}", id, ui::CROSS, ui::BANG, s.title)));
-            } else {
-                high = true;
-                println!("{}", ui::paint(ui::RED, &format!("  {} {} FALHOU, deveria estar pronto: {}", id, ui::CROSS, s.title)));
-            }
-        } else if at {
-            println!("{}", ui::paint(ui::YELLOW, &format!("  {} {} atual, ainda não concluído: {}", id, ui::BALL, s.title)));
+        if passed[i] {
+            let lab = if cached[i] { " (cache)" } else { "" };
+            println!("{}", ui::paint(ui::GREEN, &format!("  {} {}  passou{}: {}", id, ui::CHECK, lab, s.title)));
+        } else if last_ran.map(|li| i < li).unwrap_or(false) {
+            high_plus = true;
+            println!("{}", ui::paint(ui::DARK_RED, &format!("  {} {}{} FALHOU, incompleto antes de um passo já feito: {}", id, ui::CROSS, ui::BANG, s.title)));
+        } else if i == next_idx {
+            println!("{}", ui::paint(ui::YELLOW, &format!("  {} {} a fazer agora: {}", id, ui::BALL, s.title)));
         } else {
             println!("{}", ui::paint(ui::FADED, &format!("  {}  ainda não iniciado: {}", id, s.title)));
         }
@@ -499,17 +454,15 @@ fn cmd_check() {
 
     println!();
     let resumo = if high_plus {
-        ui::paint(ui::DARK_RED, &format!("{} Tem passo concluído depois de um incompleto. Volte e conserte o que falhou antes de seguir.", ui::BANG))
-    } else if high {
-        ui::paint(ui::RED, &format!("{} Um passo que deveria estar pronto falhou. Conserte antes de continuar.", ui::CROSS))
+        ui::paint(ui::DARK_RED, &format!("{} Há passo concluído depois de um incompleto. Conserte o que falhou antes de seguir.", ui::BANG))
     } else if next_idx >= steps.len() {
-        ui::paint(ui::GREEN, &format!("{} Tudo validado, exercícios completos.", ui::CHECK))
+        ui::paint(ui::GREEN, &format!("{} Tudo validado e completo.", ui::CHECK))
     } else {
         let n = &steps[next_idx];
         if n.for_role(role) {
-            ui::paint(ui::CYAN, &format!("Tudo certo até aqui. O atual ({}) ainda não foi feito, é o próximo nesta máquina.", n.id()))
+            ui::paint(ui::CYAN, &format!("Próximo nesta máquina: {} ({}).", n.id(), n.title))
         } else {
-            ui::paint(ui::YELLOW, &format!("Tudo certo até aqui. O próximo ({}) é na máquina {}.", n.id(), n.machines_label()))
+            ui::paint(ui::YELLOW, &format!("Próximo é na máquina {}: {} ({}). Lá rode `bdd check`; aqui depois `bdd ok`.", n.machines_label(), n.id(), n.title))
         }
     };
     println!("{}", resumo);

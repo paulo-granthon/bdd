@@ -112,8 +112,7 @@ bdd id
 | `bdd log` | lista todos os passos, coloridos por estado, com legenda |
 | `bdd next` | mostra só o próximo passo, e se é nesta máquina ou em outra |
 | `bdd ok` | marca o próximo passo como feito (quando ele é de **outra** máquina) |
-| `bdd sync` | adota o progresso já feito antes do bdd, checando o estado real da máquina |
-| `bdd check` | roda as validações e diz, por severidade, o que está pendente |
+| `bdd check` | valida a máquina, adota o que já está pronto e ajusta o `next` |
 | `bdd id` | mostra/define qual máquina é esta (`bdd id` interativo, `bdd id mgm` direto) |
 
 Depois de qualquer comando, o `bdd` imprime o **próximo passo** a executar.
@@ -137,9 +136,10 @@ Depois de qualquer comando, o `bdd` imprime o **próximo passo** a executar.
 - azul: assumido feito (já passamos dele);
 - apagado: ainda não feito.
 
-No `check`, falhas ganham severidade: amarelo `●` (passo atual, ainda em
-andamento), vermelho `✗` (passo que já deveria estar pronto) e vermelho escuro
-`✗!` (passo concluído depois de um incompleto, ordem furada).
+No `check`, o que falta ganha severidade: amarelo `●` (passo a fazer agora),
+apagado (ainda não iniciado) e vermelho escuro `✗!` (passo incompleto antes de
+um que já está feito, ordem furada). Os que passam ficam verdes `✓`, com
+`(cache)` quando o resultado já tinha sido validado antes.
 
 ## Já comecei antes do bdd? (recuperar progresso)
 
@@ -148,11 +148,10 @@ O `bdd` não depende do histórico dele para saber onde você está: ele olha o
 antes de instalar o bdd:
 
 1. instale o bdd (qualquer opção acima);
-2. em cada VM, rode `bdd check` para ver o que já está pronto (ele roda as
-   validações reais: serviços no ar, cluster conectado, dados presentes, etc.);
-3. rode `bdd sync` para adotar esse progresso (marca como feito os passos desta
-   máquina que já passam);
-4. siga com `bdd next`.
+2. em cada VM, rode `bdd check`: ele roda as validações reais (serviços no ar,
+   cluster conectado, dados presentes, etc.), **adota como feito** o que já passa
+   e ajusta o `next`;
+3. siga com `bdd next`.
 
 Faça isso em cada uma das três VMs. Passos que rodam em outra máquina você
 confirma depois com `bdd ok`.
