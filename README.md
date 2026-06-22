@@ -54,6 +54,19 @@ O `bdd inject` é uma interface interativa (TUI) que:
 
 Pronto: `bdd` está em todas, cada uma já sabe quem é.
 
+> **Se o scan não achar todas as VMs (ou aparecer "sem acesso"):** o host só
+> alcança a VM pela placa em **bridge** (`enp0s3`, DHCP); a rede interna
+> `192.168.1.x` (`enp0s8`) é só entre as VMs. VMs **clonadas** costumam ficar com
+> o **mesmo MAC** na placa bridge, e o DHCP dá o **mesmo IP** às duas (conflito),
+> então só uma responde. Conserte regenerando o MAC: no VirtualBox, Settings >
+> Network > Adapter 1 > Advanced > MAC Address > botão de regenerar (↻), em cada
+> VM. Depois reinicie a VM, ou renove o DHCP nela:
+> ```
+> sudo dhclient -r enp0s3 && sudo dhclient enp0s3
+> ```
+> Confira com `ip -4 addr show enp0s3` que cada VM tem um `192.168.0.x` distinto.
+> Se faltar alguma, dá para adicionar o IP na mão na própria tela do `bdd inject`.
+
 ### Opção B: instalar na própria VM (on-box)
 
 Dentro da VM. Tente primeiro a linha curta; se der erro de SSL, use a de baixo

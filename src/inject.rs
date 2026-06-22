@@ -156,7 +156,7 @@ pub fn run() {
     ui::proximo(&[
         "em cada VM: bdd check   (mostra o que já está pronto)".to_string(),
         "depois:     bdd sync    (adota o progresso anterior)".to_string(),
-        "e:          bdd next    (próximo passo)".to_string(),
+        "e então:    bdd next    (mostra qual é o próximo passo)".to_string(),
     ]);
 }
 
@@ -339,6 +339,20 @@ impl Screen {
         let _ = o.flush();
         self.prev = 0;
     }
+}
+
+/// Roda `job` numa thread e anima um spinner no título até terminar.
+fn spin<T: Send + 'static>(scr: &mut Screen, log: &[String], job: impl FnOnce() -> T + Send + 'static) -> T {
+    let h = std::thread::spawn(job);
+    let frames = ['\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280f}'];
+    let mut i = 0usize;
+    while !h.is_finished() {
+        let title = format!("Procurando VMs {}", frames[i % frames.len()]);
+        scr.render(&frame(&title, log_body(log)));
+        std::thread::sleep(Duration::from_millis(90));
+        i += 1;
+    }
+    h.join().unwrap()
 }
 
 fn key_press() -> Option<crossterm::event::KeyEvent> {
@@ -544,14 +558,16 @@ fn compact_cols(cols: &mut Vec<Cred>) {
     *cols = kept;
 }
 
+// só colunas PREENCHIDAS contam (uma coluna vazia não reserva o rótulo)
 fn labels_used_by_others(cols: &[Cred], idx: usize) -> Vec<ColLabel> {
-    cols.iter().enumerate().filter(|(i, _)| *i != idx).map(|(_, c)| c.label).collect()
+    cols.iter().enumerate().filter(|(i, c)| *i != idx && c.filled()).map(|(_, c)| c.label).collect()
 }
 
 fn options_for(cols: &[Cred], idx: usize) -> Vec<ColLabel> {
     let used = labels_used_by_others(cols, idx);
+    let nfilled = cols.iter().filter(|c| c.filled()).count();
     let mut opts = Vec::new();
-    if cols.len() < 3 && !used.contains(&ColLabel::Any) {
+    if nfilled < 3 && !used.contains(&ColLabel::Any) {
         opts.push(ColLabel::Any);
     }
     for l in [ColLabel::Mgm, ColLabel::N1, ColLabel::N2] {
@@ -563,26 +579,21 @@ fn options_for(cols: &[Cred], idx: usize) -> Vec<ColLabel> {
 }
 
 fn normalize_labels(cols: &mut [Cred]) {
-    let n = cols.len();
-    for i in 0..n {
+    for i in 0..cols.len() {
         let opts = options_for(cols, i);
-        let ok = opts.contains(&cols[i].label) && !(n == 3 && cols[i].label == ColLabel::Any);
-        if !ok {
-            // escolhe a primeira opção válida (prefere papel quando n==3)
-            let pick = opts.iter().copied().find(|l| !(n == 3 && *l == ColLabel::Any)).unwrap_or(ColLabel::Any);
-            cols[i].label = pick;
+        if !opts.contains(&cols[i].label) {
+            cols[i].label = opts.first().copied().unwrap_or(ColLabel::Any);
         }
     }
 }
 
 fn cycle_label(cols: &mut [Cred], idx: usize) {
     let opts = options_for(cols, idx);
-    let valid: Vec<ColLabel> = opts.into_iter().filter(|l| !(cols.len() == 3 && *l == ColLabel::Any)).collect();
-    if valid.is_empty() {
+    if opts.is_empty() {
         return;
     }
-    let cur = valid.iter().position(|l| *l == cols[idx].label).unwrap_or(0);
-    cols[idx].label = valid[(cur + 1) % valid.len()];
+    let cur = opts.iter().position(|l| *l == cols[idx].label).unwrap_or(0);
+    cols[idx].label = opts[(cur + 1) % opts.len()];
 }
 
 fn collect(cols: &[Cred]) -> Vec<Cred> {
@@ -718,29 +729,31 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
     }
     let _ = execute!(stdout(), Hide);
 
-    // ---- carregamento com logs no painel ----
+    // ---- carregamento com logs no painel (com spinner enquanto bloqueia) ----
     let mut log: Vec<String> = Vec::new();
-    let put = |scr: &mut Screen, log: &mut Vec<String>, s: String| {
-        log.push(s);
-        scr.render(&frame("Procurando VMs", log_body(log)));
-    };
-    put(&mut scr, &mut log, "escaneando a rede...".to_string());
-    let ips = scan(base, exclude);
-    put(&mut scr, &mut log, format!("{} host(s) com SSH encontrados.", ips.len()));
+    log.push("escaneando a rede...".to_string());
+    let base2 = base.to_string();
+    let ex = exclude.clone();
+    let ips = spin(&mut scr, &log, move || scan(&base2, &ex));
+    log.push(format!("{} host(s) com SSH encontrados.", ips.len()));
 
     let mut cands: Vec<Cand> = Vec::new();
     for ip in &ips {
-        put(&mut scr, &mut log, format!("testando credenciais em {} ...", ip));
-        let (host, intern, suggest, working) = probe(ip, creds);
+        log.push(format!("testando credenciais em {} ...", ip));
+        let ipc = ip.clone();
+        let cr = creds.to_vec();
+        let (host, intern, suggest, working) = spin(&mut scr, &log, move || probe(&ipc, &cr));
         if working.is_empty() {
-            put(&mut scr, &mut log, format!("  {}: sem acesso", ip));
+            log.push(format!("  {}: sem acesso", ip));
         } else {
             let extra = suggest.map(|r| format!(" ({})", r.name())).unwrap_or_default();
-            put(&mut scr, &mut log, format!("  {}: acesso ok{}", ip, extra));
+            log.push(format!("  {}: acesso ok{}", ip, extra));
         }
+        scr.render(&frame("Procurando VMs", log_body(&log)));
         cands.push(Cand { ip: ip.clone(), host, intern, suggest, working, role: None });
     }
-    put(&mut scr, &mut log, "faltou VM? cheque o IP dela ou adicione abaixo.".to_string());
+    log.push("faltou VM? cheque o IP dela ou adicione abaixo.".to_string());
+    scr.render(&frame("Procurando VMs", log_body(&log)));
 
     // ordena: bons candidatos (acessiveis com sugestao) primeiro MGM>N1>N2, resto por IP
     sort_cands(&mut cands);
@@ -805,42 +818,28 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
                 KeyCode::Tab => focus = if add_ip.is_empty() { Sel::Enter } else { Sel::AddRole },
                 KeyCode::BackTab => focus = Sel::List,
                 KeyCode::Up => focus = Sel::List,
+                KeyCode::Down => focus = Sel::Enter,
                 KeyCode::Backspace => { add_ip.pop(); }
                 KeyCode::Char(c) if !c.is_whitespace() => add_ip.push(c),
-                KeyCode::Enter => {
-                    if !add_ip.is_empty() {
-                        if let Some(r) = add_role.or_else(|| first_free_role(&cands)) {
-                            scr.clear();
-                            let _ = disable_raw_mode();
-                            println!("[inject] testando {} ...", add_ip);
-                            let (host, intern, suggest, working) = probe(&add_ip, creds);
-                            let mut c = Cand { ip: add_ip.clone(), host, intern, suggest, working, role: None };
-                            if c.accessible() { c.role = Some(r); } else { println!("[inject] {}: sem acesso", add_ip); }
-                            cands.push(c);
-                            sort_cands(&mut cands);
-                            let _ = enable_raw_mode();
-                            let _ = execute!(stdout(), Hide);
-                            scr = Screen::new();
-                            add_ip.clear();
-                            add_role = None;
-                        }
-                    }
-                }
+                KeyCode::Enter => do_add(&mut cands, &mut scr, &mut add_ip, &mut add_role, creds),
                 _ => {}
             },
             Sel::AddRole => match k.code {
                 KeyCode::Esc => { result = None; break; }
                 KeyCode::Tab => focus = Sel::Enter,
                 KeyCode::BackTab => focus = Sel::AddIp,
-                KeyCode::Left | KeyCode::Up => add_role = cycle_free_role(&cands, add_role, false),
-                KeyCode::Right | KeyCode::Down | KeyCode::Enter => add_role = cycle_free_role(&cands, add_role, true),
+                KeyCode::Left => add_role = cycle_free_role(&cands, add_role, false),
+                KeyCode::Right => add_role = cycle_free_role(&cands, add_role, true),
+                KeyCode::Up => focus = Sel::AddIp,
+                KeyCode::Down => focus = Sel::Enter,
+                KeyCode::Enter => do_add(&mut cands, &mut scr, &mut add_ip, &mut add_role, creds),
                 _ => {}
             },
             Sel::Enter => match k.code {
                 KeyCode::Esc => { result = None; break; }
                 KeyCode::Tab => focus = Sel::Esc,
                 KeyCode::BackTab => focus = if show_add { Sel::AddIp } else { Sel::List },
-                KeyCode::Left | KeyCode::Up => focus = Sel::List,
+                KeyCode::Up => focus = if show_add { Sel::AddIp } else { Sel::List },
                 KeyCode::Right => focus = Sel::Esc,
                 KeyCode::Enter => { result = Some(gather(&cands)); break; }
                 _ => {}
@@ -849,6 +848,7 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
                 KeyCode::Esc => { result = None; break; }
                 KeyCode::Tab => focus = Sel::List,
                 KeyCode::BackTab | KeyCode::Left => focus = Sel::Enter,
+                KeyCode::Up => focus = if show_add { Sel::AddIp } else { Sel::List },
                 KeyCode::Enter => { result = None; break; }
                 _ => {}
             },
@@ -915,6 +915,33 @@ fn fix_roles(cands: &mut [Cand]) {
         }
     }
 }
+fn do_add(cands: &mut Vec<Cand>, scr: &mut Screen, add_ip: &mut String, add_role: &mut Option<Role>, creds: &[Cred]) {
+    if add_ip.is_empty() {
+        return;
+    }
+    let r = match add_role.or_else(|| first_free_role(cands)) {
+        Some(r) => r,
+        None => return,
+    };
+    scr.clear();
+    let _ = disable_raw_mode();
+    println!("[inject] testando {} ...", add_ip);
+    let (host, intern, suggest, working) = probe(add_ip, creds);
+    let mut c = Cand { ip: add_ip.clone(), host, intern, suggest, working, role: None };
+    if c.accessible() {
+        c.role = Some(r);
+    } else {
+        println!("[inject] {}: sem acesso", add_ip);
+    }
+    cands.push(c);
+    sort_cands(cands);
+    let _ = enable_raw_mode();
+    let _ = execute!(stdout(), Hide);
+    *scr = Screen::new();
+    add_ip.clear();
+    *add_role = None;
+}
+
 fn gather(cands: &[Cand]) -> Vec<(Role, String, Cred)> {
     let mut out = Vec::new();
     for c in cands {
