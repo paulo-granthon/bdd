@@ -435,7 +435,7 @@ fn clip(s: &str, max: usize) -> String {
 fn panel_line(content: &str) -> String {
     let content = clip(content, PW);
     let padn = PW.saturating_sub(visible_len(&content));
-    format!("{}{}\u{2502} {}{}{} \u{2502}{}", BG, FG_DIM, content, SR, " ".repeat(padn), RESET)
+    format!("{}{}\u{2502} {}{}{} {}\u{2502}{}", BG, FG_DIM, content, SR, " ".repeat(padn), FG_DIM, RESET)
 }
 
 /// Envolve `body` (já PW de largura) num painel de altura fixa PH.
