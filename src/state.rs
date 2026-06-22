@@ -16,6 +16,7 @@ pub struct State {
     pub user_role: Option<Role>,
     pub ran: Vec<String>,
     pub checked: Vec<String>,
+    pub seen_intro: bool,
 }
 
 impl State {
@@ -24,6 +25,7 @@ impl State {
             user_role: None,
             ran: Vec::new(),
             checked: Vec::new(),
+            seen_intro: false,
         };
         if let Ok(txt) = fs::read_to_string(file()) {
             for line in txt.lines() {
@@ -34,6 +36,8 @@ impl State {
                     st.ran = split_csv(v);
                 } else if let Some(v) = line.strip_prefix("checked=") {
                     st.checked = split_csv(v);
+                } else if let Some(v) = line.strip_prefix("intro=") {
+                    st.seen_intro = v.trim() == "1";
                 }
             }
         }
@@ -43,10 +47,11 @@ impl State {
     pub fn save(&self) {
         let _ = fs::create_dir_all(dir());
         let body = format!(
-            "user_role={}\nran={}\nchecked={}\n",
+            "user_role={}\nran={}\nchecked={}\nintro={}\n",
             self.user_role.map(|r| r.code()).unwrap_or(""),
             self.ran.join(","),
             self.checked.join(","),
+            if self.seen_intro { "1" } else { "0" },
         );
         if fs::write(file(), body).is_err() {
             eprintln!(

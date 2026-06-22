@@ -54,6 +54,20 @@ fn usage() {
     println!("  bdd id      mostra/define qual máquina é esta (MGM/N1/N2)");
     println!("  bdd inject  (no HOST) instala o bdd nas VMs por SSH (TUI)");
     println!();
+
+    // Primeira vez que rodam `bdd` nesta máquina: mostra o passo-a-passo inicial.
+    let mut st = State::load();
+    if !st.seen_intro {
+        st.seen_intro = true;
+        st.save();
+        ui::proximo(&[
+            "veja o que já está pronto nesta máquina: bdd check".to_string(),
+            "adote o progresso já feito antes do bdd:  bdd sync".to_string(),
+            "e então, o próximo passo a executar:      bdd next".to_string(),
+        ]);
+        return;
+    }
+
     let (role, origin) = current_role();
     match role {
         Some(r) => ui::proximo(&[format!(
