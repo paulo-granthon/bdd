@@ -440,6 +440,19 @@ fn boxed_button(txt: &str, focus: bool) -> [String; 3] {
 fn button_box_w(txt: &str) -> usize {
     txt.chars().count() + 4
 }
+
+/// Caixa de input ascii de 3 linhas, com o rótulo embutido na borda de cima.
+fn boxed_input(title: &str, content: &str, focus: bool, w: usize) -> [String; 3] {
+    let code = if focus { FG_CYAN } else { FG_NORM };
+    let tcode = if focus { FG_BRIGHT } else { FG_NORM };
+    let head = format!("\u{2500} {} ", title); // ─ titulo
+    let dashes = w.saturating_sub(visible_len(&head));
+    [
+        fg(code, &format!("\u{250c}{}{}\u{2510}", head, "\u{2500}".repeat(dashes))),
+        format!("{}{}{}", fg(code, "\u{2502}"), fg(tcode, &pad(content, w)), fg(code, "\u{2502}")),
+        fg(code, &format!("\u{2514}{}\u{2518}", "\u{2500}".repeat(w))),
+    ]
+}
 /// 3 linhas com Enter/Esc centralizados.
 fn buttons_rows(enter_focus: bool, esc_focus: bool) -> [String; 3] {
     let eb = boxed_button("Enter", enter_focus);
@@ -727,7 +740,7 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
         }
         cands.push(Cand { ip: ip.clone(), host, intern, suggest, working, role: None });
     }
-    put(&mut scr, &mut log, "se faltou alguma VM, confira 'ip -4 a' nela ou adicione o IP abaixo.".to_string());
+    put(&mut scr, &mut log, "faltou VM? cheque o IP dela ou adicione abaixo.".to_string());
 
     // ordena: bons candidatos (acessiveis com sugestao) primeiro MGM>N1>N2, resto por IP
     sort_cands(&mut cands);
@@ -940,20 +953,21 @@ fn select_body(cands: &[Cand], focus: &Sel, li: usize, top: usize, show_add: boo
         let code = if cursor && list_focus { FG_BRIGHT } else if list_focus { FG_NORM } else { FG_DIM };
         body.push(format!("{}{}", mk, fg(code, &pad(&txt, PW - 2))));
     }
-    body.push(String::new());
-    // add row
+    // add (3 linhas, caixas ascii)
     if show_add {
-        let ipf = *focus == Sel::AddIp;
-        let rf = *focus == Sel::AddRole;
-        let ipbox = small_box("IP", add_ip, ipf, 15);
-        let rolebox = if !add_ip.is_empty() {
+        let ipbox = boxed_input("IP", add_ip, *focus == Sel::AddIp, 15);
+        let rb = if !add_ip.is_empty() {
             let rt = add_role.or_else(|| first_free_role(cands)).map(|r| r.name()).unwrap_or("?");
-            small_box("função", rt, rf, 6)
+            boxed_input("função", rt, *focus == Sel::AddRole, 9)
         } else {
-            String::new()
+            [String::new(), String::new(), String::new()]
         };
-        body.push(format!("{}  {}", ipbox, rolebox));
+        body.push(format!("{}  {}", ipbox[0], rb[0]));
+        body.push(format!("{}  {}", ipbox[1], rb[1]));
+        body.push(format!("{}  {}", ipbox[2], rb[2]));
     } else {
+        body.push(String::new());
+        body.push(String::new());
         body.push(String::new());
     }
     // botoes
@@ -970,12 +984,6 @@ fn select_body(cands: &[Cand], focus: &Sel, li: usize, top: usize, show_add: boo
     };
     body.push(fg(FG_DIM, hint));
     body
-}
-
-fn small_box(label: &str, content: &str, focus: bool, w: usize) -> String {
-    let code = if focus { FG_CYAN } else { FG_NORM };
-    let tcode = if focus { FG_BRIGHT } else { FG_NORM };
-    format!("{} {}{}{}{}", fg(FG_DIM, label), fg(code, "["), fg(tcode, &pad(content, w)), fg(code, "]"), "")
 }
 
 fn pick_role_inline(scr: &mut Screen, cands: &[Cand], li: usize) -> Option<Role> {
