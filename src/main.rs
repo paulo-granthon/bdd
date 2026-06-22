@@ -436,7 +436,12 @@ fn cmd_check() {
     for (i, s) in steps.iter().enumerate() {
         let id = s.id();
         if !s.for_role(role) {
-            println!("{}", ui::paint(ui::FADED, &format!("  {}  n/a (máquina {}): {}", id, s.machines_label(), s.title)));
+            if st.has_ran(&id) {
+                // confirmado via `bdd ok` (rodou em outra máquina)
+                println!("{}", ui::paint(ui::GREEN, &format!("  {} {}  feito em outra máquina ({}): {}", id, ui::CHECK, s.machines_label(), s.title)));
+            } else {
+                println!("{}", ui::paint(ui::FADED, &format!("  {}  n/a (máquina {}): {}", id, s.machines_label(), s.title)));
+            }
             continue;
         }
         if passed[i] {
@@ -452,6 +457,12 @@ fn cmd_check() {
         }
     }
 
+    println!();
+    println!("{}", ui::paint(ui::DIM, "Legenda:"));
+    println!("  {}   passou / feito (com (cache) se já validado antes)", ui::paint(ui::GREEN, &format!("x.y {}", ui::CHECK)));
+    println!("  {}   a fazer agora (próximo desta máquina)", ui::paint(ui::YELLOW, &format!("x.y {}", ui::BALL)));
+    println!("  {}   incompleto antes de um passo já feito (ordem furada)", ui::paint(ui::DARK_RED, &format!("x.y {}{}", ui::CROSS, ui::BANG)));
+    println!("  {}   ainda não iniciado, ou passo de outra máquina", ui::paint(ui::FADED, "x.y"));
     println!();
     let resumo = if high_plus {
         ui::paint(ui::DARK_RED, &format!("{} Há passo concluído depois de um incompleto. Conserte o que falhou antes de seguir.", ui::BANG))
