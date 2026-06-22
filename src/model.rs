@@ -175,7 +175,7 @@ pub fn manifest() -> Vec<Step> {
         ex08(4, MGM, "Criar keyspace (RF=3), tabela e inserir dados", "cqlsh 192.168.1.1 -e 'SELECT count(*) FROM classe.aluno;' 2>/dev/null | grep -qE '[1-9]'", "cqlsh 192.168.1.1 -e 'SELECT * FROM classe.aluno;'"),
         ex08(5, N1, "Verificar a replicação lendo no node2", "cqlsh 192.168.1.2 -e 'SELECT count(*) FROM classe.aluno;' 2>/dev/null | grep -qE '[1-9]'", "cqlsh 192.168.1.2 -e 'SELECT * FROM classe.aluno;'"),
         ex08(6, N2, "Verificar a replicação lendo no node3", "cqlsh 192.168.1.3 -e 'SELECT count(*) FROM classe.aluno;' 2>/dev/null | grep -qE '[1-9]'", "cqlsh 192.168.1.3 -e 'SELECT * FROM classe.aluno;'"),
-        ex08(7, MGM, "Testar a consistência (QUORUM vs ONE com nós off)", "true", ""),
+        ex08(7, MGM, "Testar a consistência (QUORUM vs ONE com nós off)", "", ""),
     ]
 }
 
@@ -183,7 +183,7 @@ fn ex04(st: u8, roles: &'static [Role], title: &'static str) -> Step {
     Step {
         ex: 4, st, roles, title,
         script: include_str!("../EX04/cenarios.bash"),
-        validate: "true", // observacional: roda o cenário e imprime a análise
+        validate: "", // observacional: sem validação automática; "feito" = você rodou
         proof: "",
     }
 }

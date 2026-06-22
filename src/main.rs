@@ -457,6 +457,9 @@ fn cmd_check() {
             continue;
         }
         let id = s.id();
+        if s.validate.is_empty() {
+            continue; // observacional: não valida nem adota (só conta se foi rodado)
+        }
         if st.has_checked(&id) {
             passed[i] = true;
             cached[i] = true;
@@ -476,6 +479,11 @@ fn cmd_check() {
     let cur_ex = current_exercise(&steps, &st);
     let mut high_plus = false;
 
+    // "feito" = validação passou, ou (passo observacional) foi rodado
+    let is_done = |i: usize, s: &Step| -> bool {
+        passed[i] || (s.validate.is_empty() && st.has_ran(&s.id()))
+    };
+
     // linha de um passo (usada quando o exercício é expandido)
     let step_line = |i: usize, s: &Step| -> String {
         if !s.for_role(role) {
@@ -484,9 +492,9 @@ fn cmd_check() {
             } else {
                 ui::paint(ui::FADED, &format!("  {}  n/a (máquina {}): {}", s.id(), s.machines_label(), s.title))
             }
-        } else if passed[i] {
-            let lab = if cached[i] { " (cache)" } else { "" };
-            ui::paint(ui::GREEN, &format!("  {} {}  passou{}: {}", s.id(), ui::CHECK, lab, s.title))
+        } else if is_done(i, s) {
+            let lab = if s.validate.is_empty() { "feito" } else if cached[i] { "passou (cache)" } else { "passou" };
+            ui::paint(ui::GREEN, &format!("  {} {}  {}: {}", s.id(), ui::CHECK, lab, s.title))
         } else if last_ran.map(|li| i < li).unwrap_or(false) {
             ui::paint(ui::DARK_RED, &format!("  {} {}{} FALHOU, incompleto antes de um passo já feito: {}", s.id(), ui::CROSS, ui::BANG, s.title))
         } else if i == next_idx {
@@ -499,7 +507,7 @@ fn cmd_check() {
     for ex in model::exercises(&steps) {
         let idxs: Vec<usize> = steps.iter().enumerate().filter(|(_, s)| s.ex == ex).map(|(i, _)| i).collect();
         // problema = passo desta máquina que deveria estar pronto mas falhou (ordem furada)
-        let problem = idxs.iter().any(|&i| steps[i].for_role(role) && !passed[i] && last_ran.map(|li| i < li).unwrap_or(false));
+        let problem = idxs.iter().any(|&i| steps[i].for_role(role) && !is_done(i, &steps[i]) && last_ran.map(|li| i < li).unwrap_or(false));
         if problem {
             high_plus = true;
         }
