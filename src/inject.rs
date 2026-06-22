@@ -1,9 +1,6 @@
-//! `bdd inject` (roda no HOST): acha as VMs na rede, você marca quem é
-//! MGM/N1/N2 numa TUI, e instala o bdd em cada uma por SSH. Não precisa
-//! digitar nada dentro da VM.
-//!
-//! A TUI é renderizada "em linha" (sem limpar o terminal): aparece no fim, como
-//! qualquer comando, e é redesenhada no lugar.
+//! `bdd inject` (roda no HOST): TUI para achar as VMs, marcar a função de cada
+//! uma (MGM/N1/N2) e instalar o bdd por SSH. Renderiza "em linha" (sem limpar o
+//! terminal) num painel de tamanho fixo.
 
 use crate::model::Role;
 use crate::ui;
@@ -28,7 +25,6 @@ const SSH_OPTS: &[&str] = &[
     "-o", "PreferredAuthentications=password",
 ];
 
-// estilos (usa "soft reset" 22;39 para não apagar o fundo no meio da linha)
 const BG: &str = "\x1b[48;5;236m";
 const RESET: &str = "\x1b[0m";
 const SR: &str = "\x1b[22;39m";
@@ -36,28 +32,75 @@ const FG_BRIGHT: &str = "\x1b[1m\x1b[97m";
 const FG_NORM: &str = "\x1b[37m";
 const FG_DIM: &str = "\x1b[90m";
 const FG_CYAN: &str = "\x1b[1m\x1b[96m";
+const FG_CYAN_DIM: &str = "\x1b[36m";
 
-const W: usize = 12; // largura interna da caixa
-const SEG: usize = W + 4; // marcador(2) + borda(2) + interno(W)
+const W: usize = 12; // largura interna da caixa de input
+const SEG: usize = W + 4; // marcador(2)+borda(2)+interno(W)
+const GUT: usize = 7; // gutter dos rótulos de linha
+const PW: usize = GUT + 3 * (SEG + 1); // largura fixa do painel (3 colunas)
+const PH: usize = 14; // altura fixa do corpo do painel
+
+#[derive(Clone, Copy, PartialEq)]
+enum ColLabel {
+    Any,
+    Mgm,
+    N1,
+    N2,
+}
+impl ColLabel {
+    fn text(self) -> &'static str {
+        match self {
+            ColLabel::Any => "Any",
+            ColLabel::Mgm => "MGM",
+            ColLabel::N1 => "N1",
+            ColLabel::N2 => "N2",
+        }
+    }
+    fn role(self) -> Option<Role> {
+        match self {
+            ColLabel::Mgm => Some(Role::Mgm),
+            ColLabel::N1 => Some(Role::N1),
+            ColLabel::N2 => Some(Role::N2),
+            ColLabel::Any => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Cred {
+    label: ColLabel,
+    user: String,
+    pass: String,
+}
+impl Cred {
+    fn filled(&self) -> bool {
+        !self.user.is_empty() || !self.pass.is_empty()
+    }
+}
 
 struct Cand {
     ip: String,
-    info: String,
+    host: String,
+    intern: String,
     suggest: Option<Role>,
-    creds: Option<(String, String)>,
+    working: Vec<Cred>, // credenciais que autenticaram
     role: Option<Role>,
+}
+impl Cand {
+    fn accessible(&self) -> bool {
+        !self.working.is_empty()
+    }
+    /// credencial a usar para a função atribuída (label da função, senão Any, senão a 1a que funcionou)
+    fn cred_for(&self, r: Role) -> Option<&Cred> {
+        self.working.iter().find(|c| c.label.role() == Some(r))
+            .or_else(|| self.working.iter().find(|c| c.label == ColLabel::Any))
+            .or_else(|| self.working.first())
+    }
 }
 
 pub fn run() {
-    // Pré-visualização estática da TUI de credenciais (para inspeção visual).
     if std::env::var("BDD_INJECT_PREVIEW").is_ok() {
-        let cols = vec![
-            Col { label: ColLabel::Mgm, user: "paulo".into(), pass: "secret".into() },
-            Col { label: ColLabel::Any, user: String::new(), pass: String::new() },
-        ];
-        for l in render_creds(&cols, true, 1, 0) {
-            println!("{}", l);
-        }
+        preview();
         return;
     }
     for dep in ["ssh", "scp"] {
@@ -75,44 +118,23 @@ pub fn run() {
         eprintln!("  openSUSE:      sudo zypper install -y sshpass");
         return;
     }
-
     let bin = match std::env::current_exe() {
         Ok(p) => p,
-        Err(_) => {
-            eprintln!("[inject] não achei o próprio binário para enviar.");
-            return;
-        }
+        Err(_) => { eprintln!("[inject] não achei o próprio binário."); return; }
     };
-
     let host_ips = host_ips();
     let base = match host_ips.iter().find_map(|ip| subnet_base(ip)) {
         Some(b) => b,
-        None => {
-            eprintln!("[inject] não achei a rede do host.");
-            return;
-        }
+        None => { eprintln!("[inject] não achei a rede do host."); return; }
     };
 
     let creds = match tui_creds() {
         Some(c) if !c.is_empty() => c,
-        _ => {
-            println!("[inject] cancelado.");
-            return;
-        }
+        _ => { println!("[inject] cancelado."); return; }
     };
 
-    println!("[inject] procurando VMs (SSH) em {}.0/24 ...", base);
     let exclude: HashSet<String> = host_ips.into_iter().collect();
-    let ips = scan(&base, &exclude);
-
-    println!("[inject] identificando {} host(s)...", ips.len());
-    let mut cands: Vec<Cand> = Vec::new();
-    for ip in ips {
-        let (info, suggest, creds_ok) = probe(&ip, &creds);
-        cands.push(Cand { ip, info, suggest, creds: creds_ok, role: None });
-    }
-
-    let chosen = match tui_select(&mut cands, &creds) {
+    let chosen = match tui_select(&base, &exclude, &creds) {
         Some(v) if !v.is_empty() => v,
         Some(_) => { println!("[inject] nada selecionado."); return; }
         None => { println!("[inject] cancelado."); return; }
@@ -120,16 +142,15 @@ pub fn run() {
 
     println!();
     let exe = bin.to_string_lossy().to_string();
-    for (role, ip, (u, p)) in &chosen {
+    for (role, ip, cred) in &chosen {
         print!("[inject] {} ({}) ... ", role.name(), ip);
         let _ = stdout().flush();
-        if inject_one(ip, *role, u, p, &exe) {
+        if inject_one(ip, *role, &cred.user, &cred.pass, &exe) {
             println!("{}", ui::paint(ui::GREEN, "ok"));
         } else {
             println!("{}", ui::paint(ui::RED, "falhou"));
         }
     }
-
     println!();
     println!("{}", ui::paint(ui::GREEN, "[inject] pronto."));
     ui::proximo(&[
@@ -181,7 +202,7 @@ fn subnet_base(ip: &str) -> Option<String> {
 
 fn port_open(ip: &str, port: u16) -> bool {
     match format!("{}:{}", ip, port).parse::<SocketAddr>() {
-        Ok(a) => TcpStream::connect_timeout(&a, Duration::from_millis(1500)).is_ok(),
+        Ok(a) => TcpStream::connect_timeout(&a, Duration::from_millis(2000)).is_ok(),
         Err(_) => false,
     }
 }
@@ -195,10 +216,7 @@ fn scan_pass(targets: &[String]) -> Vec<String> {
         let res = res.clone();
         handles.push(std::thread::spawn(move || loop {
             let ip = { q.lock().unwrap().pop() };
-            let ip = match ip {
-                Some(x) => x,
-                None => break,
-            };
+            let ip = match ip { Some(x) => x, None => break };
             if port_open(&ip, 22) {
                 res.lock().unwrap().push(ip);
             }
@@ -211,18 +229,24 @@ fn scan_pass(targets: &[String]) -> Vec<String> {
 }
 
 fn scan(base: &str, exclude: &HashSet<String>) -> Vec<String> {
-    let targets: Vec<String> = (1..=254)
+    let mut targets: Vec<String> = (1..=254)
         .map(|o| format!("{}.{}", base, o))
         .filter(|ip| !exclude.contains(ip))
         .collect();
-    let open = scan_pass(&targets);
-    let openset: HashSet<String> = open.iter().cloned().collect();
-    let missed: Vec<String> = targets.into_iter().filter(|t| !openset.contains(t)).collect();
-    let mut all = open;
-    all.extend(scan_pass(&missed));
-    let mut uniq: Vec<String> = all.into_iter().collect::<HashSet<_>>().into_iter().collect();
-    uniq.sort_by_key(|ip| ip.rsplit('.').next().unwrap_or("0").parse::<u16>().unwrap_or(0));
-    uniq
+    let mut found: HashSet<String> = HashSet::new();
+    for _ in 0..3 {
+        // re-tenta só os que ainda não responderam (cobre VMs lentas)
+        targets.retain(|t| !found.contains(t));
+        if targets.is_empty() {
+            break;
+        }
+        for ip in scan_pass(&targets) {
+            found.insert(ip);
+        }
+    }
+    let mut v: Vec<String> = found.into_iter().collect();
+    v.sort_by_key(|ip| ip.rsplit('.').next().unwrap_or("0").parse::<u16>().unwrap_or(0));
+    v
 }
 
 fn role_from(host: &str, ips: &str) -> Option<Role> {
@@ -233,73 +257,57 @@ fn role_from(host: &str, ips: &str) -> Option<Role> {
         _ => {}
     }
     let s = format!(" {} ", ips);
-    if s.contains(" 192.168.1.1 ") {
-        Some(Role::Mgm)
-    } else if s.contains(" 192.168.1.2 ") {
-        Some(Role::N1)
-    } else if s.contains(" 192.168.1.3 ") {
-        Some(Role::N2)
-    } else {
-        None
-    }
+    if s.contains(" 192.168.1.1 ") { Some(Role::Mgm) }
+    else if s.contains(" 192.168.1.2 ") { Some(Role::N1) }
+    else if s.contains(" 192.168.1.3 ") { Some(Role::N2) }
+    else { None }
 }
 
-fn probe(ip: &str, creds: &[(String, String)]) -> (String, Option<Role>, Option<(String, String)>) {
-    for (u, p) in creds {
+/// Tenta cada credencial; devolve (host, interna, suggest, creds que funcionaram).
+fn probe(ip: &str, creds: &[Cred]) -> (String, String, Option<Role>, Vec<Cred>) {
+    let mut working = Vec::new();
+    let mut host = String::new();
+    let mut intern = String::new();
+    let mut suggest = None;
+    for c in creds {
         let out = Command::new("sshpass")
-            .args(["-p", p])
+            .args(["-p", &c.pass])
             .arg("ssh")
             .args(SSH_OPTS)
-            .arg(format!("{}@{}", u, ip))
+            .arg(format!("{}@{}", c.user, ip))
             .arg("echo H:$(hostname); echo I:$(hostname -I)")
             .output();
         if let Ok(o) = out {
             if o.status.success() {
-                let s = String::from_utf8_lossy(&o.stdout);
-                let host = s.lines().find_map(|l| l.strip_prefix("H:")).unwrap_or("").trim().to_string();
-                let ips = s.lines().find_map(|l| l.strip_prefix("I:")).unwrap_or("").trim().to_string();
-                let role = role_from(&host, &ips);
-                let intern = ips.split_whitespace().find(|t| t.starts_with("192.168.1."));
-                let info = match intern {
-                    Some(i) => format!("hostname={}, interna={}", host, i),
-                    None => format!("hostname={}", host),
-                };
-                return (info, role, Some((u.clone(), p.clone())));
+                working.push(c.clone());
+                if host.is_empty() {
+                    let s = String::from_utf8_lossy(&o.stdout);
+                    host = s.lines().find_map(|l| l.strip_prefix("H:")).unwrap_or("").trim().to_string();
+                    let ips = s.lines().find_map(|l| l.strip_prefix("I:")).unwrap_or("").trim().to_string();
+                    suggest = role_from(&host, &ips);
+                    intern = ips.split_whitespace().find(|t| t.starts_with("192.168.1.")).unwrap_or("").to_string();
+                }
             }
         }
     }
-    ("login falhou (creds não bateram)".to_string(), None, None)
+    (host, intern, suggest, working)
 }
 
 fn inject_one(ip: &str, role: Role, user: &str, pass: &str, exe: &str) -> bool {
-    let scp = Command::new("sshpass")
-        .args(["-p", pass])
-        .arg("scp")
-        .args(SSH_OPTS)
-        .arg(exe)
-        .arg(format!("{}@{}:/tmp/bdd", user, ip))
-        .status();
+    let scp = Command::new("sshpass").args(["-p", pass]).arg("scp").args(SSH_OPTS).arg(exe).arg(format!("{}@{}:/tmp/bdd", user, ip)).status();
     if !matches!(scp, Ok(s) if s.success()) {
         return false;
     }
     let remote = format!(
         "echo '{p}' | sudo -S sh -c 'install -m 0755 /tmp/bdd /usr/local/bin/bdd && mkdir -p /var/lib/bdd && chmod 777 /var/lib/bdd && rm -f /tmp/bdd' && /usr/local/bin/bdd id {r} >/dev/null",
-        p = pass,
-        r = role.code()
+        p = pass, r = role.code()
     );
-    let ssh = Command::new("sshpass")
-        .args(["-p", pass])
-        .arg("ssh")
-        .args(SSH_OPTS)
-        .arg(format!("{}@{}", user, ip))
-        .arg(remote)
-        .status();
+    let ssh = Command::new("sshpass").args(["-p", pass]).arg("ssh").args(SSH_OPTS).arg(format!("{}@{}", user, ip)).arg(remote).status();
     matches!(ssh, Ok(s) if s.success())
 }
 
 // --------------------------------------------------------------- tela inline
 
-/// Renderiza um bloco de linhas no lugar (sem limpar o terminal todo).
 struct Screen {
     prev: u16,
 }
@@ -337,64 +345,122 @@ fn key_press() -> Option<crossterm::event::KeyEvent> {
     loop {
         match read() {
             Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => return Some(k),
-            Ok(Event::Key(_)) => continue,
             Ok(_) => continue,
             Err(_) => return None,
         }
     }
 }
 
+// painel ----------------------------------------------------------------
+
+fn visible_len(s: &str) -> usize {
+    let mut n = 0;
+    let mut esc = false;
+    for ch in s.chars() {
+        if esc {
+            if ch == 'm' { esc = false; }
+            continue;
+        }
+        if ch == '\x1b' { esc = true; continue; }
+        n += 1;
+    }
+    n
+}
+
+fn pad(s: &str, w: usize) -> String {
+    let n = s.chars().count();
+    if n >= w { s.chars().take(w).collect() } else { format!("{}{}", s, " ".repeat(w - n)) }
+}
+fn center(s: &str, w: usize) -> String {
+    let n = s.chars().count();
+    if n >= w { return s.chars().take(w).collect(); }
+    let l = (w - n) / 2;
+    format!("{}{}{}", " ".repeat(l), s, " ".repeat(w - n - l))
+}
+fn fg(code: &str, s: &str) -> String {
+    format!("{}{}{}", code, s, SR)
+}
+
+fn panel_top(title: &str) -> String {
+    let head = format!("\u{256d}\u{2500} {} ", title);
+    let dashes = (PW + 4).saturating_sub(visible_len(&head) + 1);
+    format!("{}{}{}{}\u{256e}{}", BG, FG_DIM, head, "\u{2500}".repeat(dashes), RESET)
+}
+fn panel_bottom() -> String {
+    format!("{}{}\u{2570}{}\u{256f}{}", BG, FG_DIM, "\u{2500}".repeat(PW + 2), RESET)
+}
+fn clip(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut vis = 0;
+    let mut esc = false;
+    for ch in s.chars() {
+        if esc {
+            out.push(ch);
+            if ch == 'm' { esc = false; }
+            continue;
+        }
+        if ch == '\x1b' {
+            esc = true;
+            out.push(ch);
+            continue;
+        }
+        if vis >= max { continue; }
+        out.push(ch);
+        vis += 1;
+    }
+    out
+}
+fn panel_line(content: &str) -> String {
+    let content = clip(content, PW);
+    let padn = PW.saturating_sub(visible_len(&content));
+    format!("{}{}\u{2502} {}{}{} \u{2502}{}", BG, FG_DIM, content, SR, " ".repeat(padn), RESET)
+}
+
+/// Envolve `body` (já PW de largura) num painel de altura fixa PH.
+fn frame(title: &str, body: Vec<String>) -> Vec<String> {
+    let mut out = vec![panel_top(title)];
+    for i in 0..PH {
+        out.push(panel_line(body.get(i).map(|s| s.as_str()).unwrap_or("")));
+    }
+    out.push(panel_bottom());
+    out
+}
+
+fn boxed_button(txt: &str, focus: bool) -> [String; 3] {
+    let inner = format!(" {} ", txt);
+    let w = inner.chars().count();
+    let code = if focus { FG_CYAN } else { FG_NORM };
+    let tcode = if focus { FG_BRIGHT } else { FG_NORM };
+    [
+        fg(code, &format!("\u{250c}{}\u{2510}", "\u{2500}".repeat(w))),
+        format!("{}{}{}", fg(code, "\u{2502}"), fg(tcode, &inner), fg(code, "\u{2502}")),
+        fg(code, &format!("\u{2514}{}\u{2518}", "\u{2500}".repeat(w))),
+    ]
+}
+fn button_box_w(txt: &str) -> usize {
+    txt.chars().count() + 4
+}
+/// 3 linhas com Enter/Esc centralizados.
+fn buttons_rows(enter_focus: bool, esc_focus: bool) -> [String; 3] {
+    let eb = boxed_button("Enter", enter_focus);
+    let sb = boxed_button("Esc", esc_focus);
+    let gap = 3;
+    let combined = button_box_w("Enter") + gap + button_box_w("Esc");
+    let lp = " ".repeat(PW.saturating_sub(combined) / 2);
+    let g = " ".repeat(gap);
+    [
+        format!("{}{}{}{}", lp, eb[0], g, sb[0]),
+        format!("{}{}{}{}", lp, eb[1], g, sb[1]),
+        format!("{}{}{}{}", lp, eb[2], g, sb[2]),
+    ]
+}
+
 // --------------------------------------------------------------- TUI: creds
 
-#[derive(Clone, Copy, PartialEq)]
-enum ColLabel {
-    Any,
-    Mgm,
-    N1,
-    N2,
-}
-impl ColLabel {
-    fn text(self) -> &'static str {
-        match self {
-            ColLabel::Any => "Any",
-            ColLabel::Mgm => "MGM",
-            ColLabel::N1 => "N1",
-            ColLabel::N2 => "N2",
-        }
-    }
-    fn next(self) -> ColLabel {
-        match self {
-            ColLabel::Any => ColLabel::Mgm,
-            ColLabel::Mgm => ColLabel::N1,
-            ColLabel::N1 => ColLabel::N2,
-            ColLabel::N2 => ColLabel::Any,
-        }
-    }
-    fn prev(self) -> ColLabel {
-        match self {
-            ColLabel::Any => ColLabel::N2,
-            ColLabel::Mgm => ColLabel::Any,
-            ColLabel::N1 => ColLabel::Mgm,
-            ColLabel::N2 => ColLabel::N1,
-        }
-    }
-}
-
-struct Col {
-    label: ColLabel,
-    user: String,
-    pass: String,
-}
-impl Col {
-    fn filled(&self) -> bool {
-        !self.user.is_empty() || !self.pass.is_empty()
-    }
-}
-
-// foco: (row, col). row 0=label,1=user,2=pass,3=botoes. col em botoes: 0=Enter,1=Esc
-fn tui_creds() -> Option<Vec<(String, String)>> {
-    let mut cols: Vec<Col> = vec![Col { label: ColLabel::Any, user: String::new(), pass: String::new() }];
-    let (mut row, mut col) = (1usize, 0usize); // começa no user da primeira coluna
+// foco creds: (row,col). row 0=label,1=user,2=pass,3=botoes; col em botoes 0=Enter,1=Esc
+fn tui_creds() -> Option<Vec<Cred>> {
+    let mut cols: Vec<Cred> = vec![Cred { label: ColLabel::Any, user: String::new(), pass: String::new() }];
+    let (mut row, mut col) = (1usize, 0usize);
     let mut scr = Screen::new();
     if enable_raw_mode().is_err() {
         return None;
@@ -402,53 +468,39 @@ fn tui_creds() -> Option<Vec<(String, String)>> {
     let _ = execute!(stdout(), Hide);
     let result;
     loop {
-        // promoção: enquanto a última coluna estiver preenchida e houver espaço, abre a próxima
-        while cols.len() < 3 && cols.last().map(|c| c.filled()).unwrap_or(false) {
-            cols.push(Col { label: ColLabel::Any, user: String::new(), pass: String::new() });
-        }
+        compact_cols(&mut cols);
+        normalize_labels(&mut cols);
         let ncols = cols.len();
-        let placeholder = ncols < 3;
-        clamp_focus(&mut row, &mut col, ncols);
+        if row != 3 && col >= ncols { col = ncols - 1; }
+        if row == 3 && col > 1 { col = 1; }
 
-        scr.render(&render_creds(&cols, placeholder, row, col));
+        scr.render(&frame("Credenciais", render_creds_body(&cols, row, col)));
 
-        let k = match key_press() {
-            Some(k) => k,
-            None => { result = None; break; }
-        };
+        let k = match key_press() { Some(k) => k, None => { result = None; break; } };
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-        let shift = k.modifiers.contains(KeyModifiers::SHIFT);
         match k.code {
             KeyCode::Esc => { result = None; break; }
             KeyCode::Tab => tab_next(&mut row, &mut col, ncols),
-            KeyCode::BackTab => {
-                if row == 0 {
-                    cols[col].label = cols[col].label.prev(); // back-cycle no rótulo
-                } else {
-                    tab_prev(&mut row, &mut col, ncols);
-                }
-            }
-            KeyCode::Up => move_2d(&mut row, &mut col, -1, 0, ncols),
-            KeyCode::Down => move_2d(&mut row, &mut col, 1, 0, ncols),
-            KeyCode::Left => move_2d(&mut row, &mut col, 0, -1, ncols),
-            KeyCode::Right => move_2d(&mut row, &mut col, 0, 1, ncols),
-            KeyCode::Char('-') if row == 0 => cols[col].label = cols[col].label.prev(),
+            KeyCode::BackTab => tab_prev(&mut row, &mut col, ncols),
+            KeyCode::Up => move2(&mut row, &mut col, -1, 0, ncols),
+            KeyCode::Down => move2(&mut row, &mut col, 1, 0, ncols),
+            KeyCode::Left => move2(&mut row, &mut col, 0, -1, ncols),
+            KeyCode::Right => move2(&mut row, &mut col, 0, 1, ncols),
             KeyCode::Char('u') | KeyCode::Char('U') if ctrl => {
                 if row == 1 { cols[col].user.clear(); }
                 if row == 2 { cols[col].pass.clear(); }
             }
             KeyCode::Enter => {
                 if row == 0 {
-                    cols[col].label = if shift { cols[col].label.prev() } else { cols[col].label.next() };
+                    cycle_label(&mut cols, col);
                 } else if row == 3 {
-                    if col == 0 { result = Some(collect(&cols)); break; }
-                    else { result = None; break; }
+                    if col == 0 { result = Some(collect(&cols)); } else { result = None; }
+                    break;
                 } else {
-                    result = Some(collect(&cols)); // Enter em campo = confirmar
+                    result = Some(collect(&cols));
                     break;
                 }
             }
-            KeyCode::Char(' ') if row == 0 => cols[col].label = cols[col].label.next(),
             KeyCode::Backspace => {
                 if row == 1 { cols[col].user.pop(); }
                 if row == 2 { cols[col].pass.pop(); }
@@ -470,177 +522,134 @@ fn tui_creds() -> Option<Vec<(String, String)>> {
     }
 }
 
-fn collect(cols: &[Col]) -> Vec<(String, String)> {
-    cols.iter().filter(|c| !c.user.is_empty()).map(|c| (c.user.clone(), c.pass.clone())).collect()
+/// mantém: colunas preenchidas + no máximo UMA vazia (no fim).
+fn compact_cols(cols: &mut Vec<Cred>) {
+    let mut kept: Vec<Cred> = cols.drain(..).filter(|c| c.filled()).collect();
+    if kept.len() < 3 {
+        kept.push(Cred { label: ColLabel::Any, user: String::new(), pass: String::new() });
+    }
+    *cols = kept;
 }
 
-fn clamp_focus(row: &mut usize, col: &mut usize, ncols: usize) {
-    if *row > 3 { *row = 3; }
-    let maxcol = if *row == 3 { 1 } else { ncols.saturating_sub(1) };
-    if *col > maxcol { *col = maxcol; }
+fn labels_used_by_others(cols: &[Cred], idx: usize) -> Vec<ColLabel> {
+    cols.iter().enumerate().filter(|(i, _)| *i != idx).map(|(_, c)| c.label).collect()
 }
 
-fn tab_next(row: &mut usize, col: &mut usize, ncols: usize) {
-    // ordem: (0,0)(1,0)(2,0)(0,1)... depois (3,0)(3,1)
-    if *row == 3 {
-        if *col == 0 { *col = 1; } else { *row = 0; *col = 0; }
+fn options_for(cols: &[Cred], idx: usize) -> Vec<ColLabel> {
+    let used = labels_used_by_others(cols, idx);
+    let mut opts = Vec::new();
+    if cols.len() < 3 && !used.contains(&ColLabel::Any) {
+        opts.push(ColLabel::Any);
+    }
+    for l in [ColLabel::Mgm, ColLabel::N1, ColLabel::N2] {
+        if !used.contains(&l) {
+            opts.push(l);
+        }
+    }
+    opts
+}
+
+fn normalize_labels(cols: &mut [Cred]) {
+    let n = cols.len();
+    for i in 0..n {
+        let opts = options_for(cols, i);
+        let ok = opts.contains(&cols[i].label) && !(n == 3 && cols[i].label == ColLabel::Any);
+        if !ok {
+            // escolhe a primeira opção válida (prefere papel quando n==3)
+            let pick = opts.iter().copied().find(|l| !(n == 3 && *l == ColLabel::Any)).unwrap_or(ColLabel::Any);
+            cols[i].label = pick;
+        }
+    }
+}
+
+fn cycle_label(cols: &mut [Cred], idx: usize) {
+    let opts = options_for(cols, idx);
+    let valid: Vec<ColLabel> = opts.into_iter().filter(|l| !(cols.len() == 3 && *l == ColLabel::Any)).collect();
+    if valid.is_empty() {
         return;
     }
-    if *row < 2 {
+    let cur = valid.iter().position(|l| *l == cols[idx].label).unwrap_or(0);
+    cols[idx].label = valid[(cur + 1) % valid.len()];
+}
+
+fn collect(cols: &[Cred]) -> Vec<Cred> {
+    cols.iter().filter(|c| !c.user.is_empty()).cloned().collect()
+}
+
+// navegação creds (col: nº de colunas reais)
+fn tab_next(row: &mut usize, col: &mut usize, ncols: usize) {
+    if *row == 3 {
+        if *col == 0 { *col = 1; } else { *row = 0; *col = 0; }
+    } else if *row < 2 {
         *row += 1;
     } else {
         *row = 0;
         if *col + 1 < ncols { *col += 1; } else { *row = 3; *col = 0; }
     }
 }
-
 fn tab_prev(row: &mut usize, col: &mut usize, ncols: usize) {
     if *row == 3 {
-        if *col == 1 { *col = 0; } else { *row = 2; *col = ncols.saturating_sub(1); }
-        return;
-    }
-    if *row > 0 {
+        if *col == 1 { *col = 0; } else { *row = 2; *col = ncols - 1; }
+    } else if *row > 0 {
         *row -= 1;
     } else {
         *row = 2;
         if *col > 0 { *col -= 1; } else { *row = 3; *col = 1; }
     }
 }
-
-fn move_2d(row: &mut usize, col: &mut usize, dr: i32, dc: i32, ncols: usize) {
+fn move2(row: &mut usize, col: &mut usize, dr: i32, dc: i32, ncols: usize) {
     let nr = (*row as i32 + dr).clamp(0, 3) as usize;
     *row = nr;
-    let maxcol = if *row == 3 { 1 } else { ncols.saturating_sub(1) };
-    let nc = (*col as i32 + dc).clamp(0, maxcol as i32) as usize;
-    *col = nc.min(maxcol);
+    let maxc = if *row == 3 { 1 } else { ncols.saturating_sub(1) };
+    *col = (*col as i32 + dc).clamp(0, maxc as i32) as usize;
+    if *col > maxc { *col = maxc; }
 }
 
-fn pad(s: &str, w: usize) -> String {
-    let n = s.chars().count();
-    if n >= w {
-        s.chars().take(w).collect()
-    } else {
-        format!("{}{}", s, " ".repeat(w - n))
-    }
-}
-fn center(s: &str, w: usize) -> String {
-    let n = s.chars().count();
-    if n >= w {
-        return s.chars().take(w).collect();
-    }
-    let left = (w - n) / 2;
-    format!("{}{}{}", " ".repeat(left), s, " ".repeat(w - n - left))
-}
-fn fg(code: &str, s: &str) -> String {
-    format!("{}{}{}", code, s, SR)
-}
-
-/// Monta as linhas da TUI de credenciais (já estilizadas, com fundo).
-fn render_creds(cols: &[Col], placeholder: bool, frow: usize, fcol: usize) -> Vec<String> {
-    let gut = 7usize; // gutter dos rótulos de linha (user/senha)
-    let total_cols = cols.len() + if placeholder { 1 } else { 0 };
-
-    // segmentos por coluna para cada um dos 7 tipos de linha
-    // tipos: 0 label, 1 utop, 2 umid, 3 ubot, 4 ptop, 5 pmid, 6 pbot
-    let mut body: Vec<String> = Vec::new();
-    let row_label = |kind: usize| -> &str {
-        match kind {
-            2 => "user",
-            5 => "senha",
-            _ => "",
-        }
-    };
+fn render_creds_body(cols: &[Cred], frow: usize, fcol: usize) -> Vec<String> {
+    let mut body = Vec::new();
+    body.push(String::new());
+    // 7 linhas da grade
+    let row_label = |k: usize| match k { 2 => "user", 5 => "senha", _ => "" };
     for kind in 0..7 {
-        let mut line = String::new();
-        // gutter
-        line.push_str(&fg(FG_DIM, &pad(&format!("{:>5} ", row_label(kind)), gut)));
-        for ci in 0..total_cols {
-            let is_ph = ci >= cols.len();
-            let seg = if is_ph {
+        let mut line = fg(FG_DIM, &pad(&format!("{:>5} ", row_label(kind)), GUT));
+        for slot in 0..3 {
+            let seg = if slot < cols.len() {
+                col_seg(&cols[slot], kind, slot, frow, fcol)
+            } else if slot == cols.len() && cols.len() < 3 {
                 placeholder_seg(kind)
             } else {
-                col_seg(&cols[ci], kind, ci, frow, fcol)
+                fg(FG_DIM, &" ".repeat(SEG))
             };
             line.push_str(&seg);
             line.push(' ');
         }
         body.push(line);
     }
-
-    // dica (espaço reservado mesmo quando vazia)
-    let hint = if frow == 1 || frow == 2 {
-        fg(FG_DIM, "Ctrl+U limpa o campo  -  Tab move  -  setas movem")
-    } else if frow == 0 {
-        fg(FG_DIM, "Enter cicla o rotulo (Any/MGM/N1/N2)  -  Tab move")
-    } else {
-        String::new()
+    body.push(String::new());
+    let b = buttons_rows(frow == 3 && fcol == 0, frow == 3 && fcol == 1);
+    body.push(b[0].clone());
+    body.push(b[1].clone());
+    body.push(b[2].clone());
+    let hint = match frow {
+        1 | 2 => fg(FG_DIM, "Ctrl+U limpa o campo  -  Tab move  -  Enter confirma"),
+        0 => fg(FG_DIM, "Enter cicla o rotulo (so opcoes livres)  -  Tab move"),
+        _ => String::new(),
     };
-
-    // largura do painel
-    let content_w = gut + total_cols * (SEG + 1);
-    let panelw = content_w.max(50);
-
-    // botoes em caixa, centralizados
-    let enter_focus = frow == 3 && fcol == 0;
-    let esc_focus = frow == 3 && fcol == 1;
-    let eb = boxed_button("Enter", enter_focus);
-    let sb = boxed_button("Esc", esc_focus);
-    let gap = 3usize;
-    let combined = button_box_w("Enter") + gap + button_box_w("Esc");
-    let leftpad = panelw.saturating_sub(combined) / 2;
-    let lp = " ".repeat(leftpad);
-    let g = " ".repeat(gap);
-    let btn_top = format!("{}{}{}{}", lp, eb[0], g, sb[0]);
-    let btn_mid = format!("{}{}{}{}", lp, eb[1], g, sb[1]);
-    let btn_bot = format!("{}{}{}{}", lp, eb[2], g, sb[2]);
-
-    // monta painel com fundo dim
-    let mut out: Vec<String> = Vec::new();
-    out.push(panel_top("Credenciais", panelw));
-    out.push(panel_line("", panelw));
-    for l in &body {
-        out.push(panel_line(l, panelw));
-    }
-    out.push(panel_line("", panelw));
-    out.push(panel_line(&btn_top, panelw));
-    out.push(panel_line(&btn_mid, panelw));
-    out.push(panel_line(&btn_bot, panelw));
-    out.push(panel_line(&hint, panelw));
-    out.push(panel_bottom(panelw));
-    out
+    body.push(hint);
+    body
 }
 
-fn button_box_w(txt: &str) -> usize {
-    txt.chars().count() + 4 // " txt " + 2 bordas
-}
-
-fn boxed_button(txt: &str, focus: bool) -> [String; 3] {
-    let inner = format!(" {} ", txt);
-    let w = inner.chars().count();
-    let code = if focus { FG_CYAN } else { FG_NORM };
-    let tcode = if focus { FG_BRIGHT } else { FG_NORM };
-    [
-        fg(code, &format!("\u{250c}{}\u{2510}", "\u{2500}".repeat(w))),
-        format!("{}{}{}", fg(code, "\u{2502}"), fg(tcode, &inner), fg(code, "\u{2502}")),
-        fg(code, &format!("\u{2514}{}\u{2518}", "\u{2500}".repeat(w))),
-    ]
-}
-
-fn col_seg(c: &Col, kind: usize, ci: usize, frow: usize, fcol: usize) -> String {
+fn col_seg(c: &Cred, kind: usize, ci: usize, frow: usize, fcol: usize) -> String {
     let col_focused = fcol == ci && frow <= 2;
     let label_focused = frow == 0 && fcol == ci;
     let user_focused = frow == 1 && fcol == ci;
     let pass_focused = frow == 2 && fcol == ci;
     let unfilled = !c.filled();
-
     let base = if unfilled { FG_DIM } else { FG_NORM };
-
     match kind {
         0 => {
             let mut lbl = c.label.text().to_string();
-            if label_focused {
-                lbl.push_str(" \u{21bb}"); // ↻
-            }
+            if label_focused { lbl.push_str(" \u{21bb}"); }
             let code = if label_focused { FG_CYAN } else if col_focused { FG_BRIGHT } else if unfilled { FG_DIM } else { FG_NORM };
             fg(code, &center(&lbl, SEG))
         }
@@ -663,7 +672,7 @@ fn col_seg(c: &Col, kind: usize, ci: usize, frow: usize, fcol: usize) -> String 
             let marker = if focused { fg(FG_CYAN, "\u{25b6} ") } else { "  ".to_string() };
             let bcode = if focused { FG_CYAN } else { base };
             let tcode = if focused { FG_BRIGHT } else { base };
-            format!("{}{}{}{}{}", marker, fg(bcode, "\u{2502}"), fg(tcode, &pad(&content, W)), fg(bcode, "\u{2502}"), "")
+            format!("{}{}{}{}", marker, fg(bcode, "\u{2502}"), fg(tcode, &pad(&content, W)), fg(bcode, "\u{2502}"))
         }
         _ => " ".repeat(SEG),
     }
@@ -676,106 +685,160 @@ fn placeholder_seg(kind: usize) -> String {
     }
 }
 
-// painel ------------------------------------------------------------------
-
-fn visible_len(s: &str) -> usize {
-    // conta caracteres ignorando sequências ANSI
-    let mut n = 0;
-    let mut in_esc = false;
-    for ch in s.chars() {
-        if in_esc {
-            if ch == 'm' { in_esc = false; }
-            continue;
-        }
-        if ch == '\x1b' { in_esc = true; continue; }
-        n += 1;
-    }
-    n
-}
-
-fn panel_top(title: &str, w: usize) -> String {
-    // largura total visível das linhas internas = w + 4 ("│ " + w + " │")
-    let head = format!("\u{256d}\u{2500} {} ", title); // ╭─ titulo (espaço)
-    let dashes = (w + 4).saturating_sub(visible_len(&head) + 1); // -1 do ╮
-    format!("{}{}{}{}\u{256e}{}", BG, FG_DIM, head, "\u{2500}".repeat(dashes), RESET)
-}
-fn panel_bottom(w: usize) -> String {
-    format!("{}{}\u{2570}{}\u{256f}{}", BG, FG_DIM, "\u{2500}".repeat(w + 2), RESET)
-}
-fn panel_line(content: &str, w: usize) -> String {
-    let vis = visible_len(content);
-    let padn = w.saturating_sub(vis);
-    format!(
-        "{}{}\u{2502} {}{}{} \u{2502}{}",
-        BG, FG_DIM, content, SR, " ".repeat(padn), RESET
-    )
-}
-
 // --------------------------------------------------------------- TUI: select
 
-fn tui_select(cands: &mut [Cand], creds: &[(String, String)]) -> Option<Vec<(Role, String, (String, String))>> {
-    for r in [Role::Mgm, Role::N1, Role::N2] {
-        let hits: Vec<usize> = cands.iter().enumerate().filter(|(_, c)| c.suggest == Some(r) && c.creds.is_some()).map(|(i, _)| i).collect();
-        if hits.len() == 1 {
-            cands[hits[0]].role = Some(r);
-        }
-    }
-    let mut cursor = 0usize;
-    let mut manual: Vec<Cand> = Vec::new();
+const LROWS: usize = 6; // linhas visíveis da lista
+
+#[derive(PartialEq)]
+enum Sel {
+    List,
+    AddIp,
+    AddRole,
+    Enter,
+    Esc,
+}
+
+fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<Vec<(Role, String, Cred)>> {
     let mut scr = Screen::new();
     if enable_raw_mode().is_err() {
         return None;
     }
     let _ = execute!(stdout(), Hide);
+
+    // ---- carregamento com logs no painel ----
+    let mut log: Vec<String> = Vec::new();
+    let put = |scr: &mut Screen, log: &mut Vec<String>, s: String| {
+        log.push(s);
+        scr.render(&frame("Procurando VMs", log_body(log)));
+    };
+    put(&mut scr, &mut log, "escaneando a rede...".to_string());
+    let ips = scan(base, exclude);
+    put(&mut scr, &mut log, format!("{} host(s) com SSH encontrados.", ips.len()));
+
+    let mut cands: Vec<Cand> = Vec::new();
+    for ip in &ips {
+        put(&mut scr, &mut log, format!("testando credenciais em {} ...", ip));
+        let (host, intern, suggest, working) = probe(ip, creds);
+        if working.is_empty() {
+            put(&mut scr, &mut log, format!("  {}: sem acesso", ip));
+        } else {
+            let extra = suggest.map(|r| format!(" ({})", r.name())).unwrap_or_default();
+            put(&mut scr, &mut log, format!("  {}: acesso ok{}", ip, extra));
+        }
+        cands.push(Cand { ip: ip.clone(), host, intern, suggest, working, role: None });
+    }
+    put(&mut scr, &mut log, "se faltou alguma VM, confira 'ip -4 a' nela ou adicione o IP abaixo.".to_string());
+
+    // ordena: bons candidatos (acessiveis com sugestao) primeiro MGM>N1>N2, resto por IP
+    sort_cands(&mut cands);
+    for c in cands.iter_mut() {
+        if c.accessible() {
+            c.role = c.suggest;
+        }
+    }
+    fix_roles(&mut cands);
+
+    // ---- interação ----
+    let mut focus = Sel::List;
+    let mut li = 0usize;
+    let mut top = 0usize;
+    let mut add_ip = String::new();
+    let mut add_role: Option<Role> = None;
     let result;
     loop {
-        let total = cands.len() + manual.len();
-        let mut lines = vec![
-            fg(FG_BRIGHT, "Selecione as VMs"),
-            fg(FG_DIM, "setas movem - Enter define papel - 'a' adiciona IP - F2 confirma - Esc cancela"),
-            String::new(),
-        ];
-        let all: Vec<&Cand> = cands.iter().chain(manual.iter()).collect();
-        if all.is_empty() {
-            lines.push(fg(FG_DIM, "  (nenhuma VM; use 'a' para adicionar um IP)"));
+        let total = cands.len();
+        if li >= total && total > 0 { li = total - 1; }
+        if li < top { top = li; }
+        if li >= top + LROWS { top = li + 1 - LROWS; }
+        let show_add = !all_roles_taken(&cands);
+        if !show_add && (focus == Sel::AddIp || focus == Sel::AddRole) {
+            focus = Sel::List;
         }
-        for (i, c) in all.iter().enumerate() {
-            let marker = if i == cursor { fg(FG_CYAN, "\u{25b6} ") } else { "  ".to_string() };
-            let role = c.role.map(|r| fg(FG_BRIGHT, &format!("[{}]", r.name())))
-                .unwrap_or_else(|| c.suggest.map(|r| fg(FG_DIM, &format!("(sug: {})", r.name()))).unwrap_or_default());
-            let acc = if c.creds.is_some() { String::new() } else { fg(FG_DIM, "  (sem acesso)") };
-            lines.push(format!("{}{} {} {}{}", marker, fg(FG_NORM, &pad(&c.ip, 15)), fg(FG_DIM, &pad(&c.info, 34)), role, acc));
-        }
-        scr.render(&lines);
+
+        scr.render(&frame("Selecione as VMs", select_body(&cands, &focus, li, top, show_add, &add_ip, add_role)));
 
         let k = match key_press() { Some(k) => k, None => { result = None; break; } };
-        match k.code {
-            KeyCode::Esc => { result = None; break; }
-            KeyCode::F(2) => { result = Some(gather(cands, &manual)); break; }
-            KeyCode::Up => { if cursor > 0 { cursor -= 1; } }
-            KeyCode::Down => { if total > 0 && cursor + 1 < total { cursor += 1; } }
-            KeyCode::Char('a') => {
-                scr.clear();
-                let _ = disable_raw_mode();
-                if let Some(c) = manual_add(creds) { manual.push(c); }
-                let _ = enable_raw_mode();
-                scr = Screen::new();
-            }
-            KeyCode::Enter => {
-                if total == 0 { continue; }
-                scr.clear();
-                let chosen = pick_role();
-                scr = Screen::new();
-                let n = cands.len();
-                if let Some(role) = chosen {
-                    for c in cands.iter_mut() { if c.role == Some(role) { c.role = None; } }
-                    for c in manual.iter_mut() { if c.role == Some(role) { c.role = None; } }
-                    if cursor < n { cands[cursor].role = Some(role); } else { manual[cursor - n].role = Some(role); }
-                } else {
-                    if cursor < n { cands[cursor].role = None; } else { manual[cursor - n].role = None; }
+        match focus {
+            Sel::List => match k.code {
+                KeyCode::Esc => { result = None; break; }
+                KeyCode::Tab => focus = if show_add { Sel::AddIp } else { Sel::Enter },
+                KeyCode::BackTab => focus = Sel::Esc,
+                KeyCode::Up => {
+                    if total > 0 {
+                        if li == 0 { li = total - 1; } else { li -= 1; }
+                    }
                 }
-            }
-            _ => {}
+                KeyCode::Down => {
+                    if total == 0 || li + 1 >= total {
+                        focus = if show_add { Sel::AddIp } else { Sel::Enter };
+                    } else {
+                        li += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    if total > 0 {
+                        if let Some(r) = pick_role_inline(&mut scr, &cands, li) {
+                            assign_role(&mut cands, li, r);
+                        } else {
+                            cands[li].role = None;
+                        }
+                        let _ = execute!(stdout(), Hide);
+                    }
+                }
+                _ => {}
+            },
+            Sel::AddIp => match k.code {
+                KeyCode::Esc => { result = None; break; }
+                KeyCode::Tab => focus = if add_ip.is_empty() { Sel::Enter } else { Sel::AddRole },
+                KeyCode::BackTab => focus = Sel::List,
+                KeyCode::Up => focus = Sel::List,
+                KeyCode::Backspace => { add_ip.pop(); }
+                KeyCode::Char(c) if !c.is_whitespace() => add_ip.push(c),
+                KeyCode::Enter => {
+                    if !add_ip.is_empty() {
+                        if let Some(r) = add_role.or_else(|| first_free_role(&cands)) {
+                            scr.clear();
+                            let _ = disable_raw_mode();
+                            println!("[inject] testando {} ...", add_ip);
+                            let (host, intern, suggest, working) = probe(&add_ip, creds);
+                            let mut c = Cand { ip: add_ip.clone(), host, intern, suggest, working, role: None };
+                            if c.accessible() { c.role = Some(r); } else { println!("[inject] {}: sem acesso", add_ip); }
+                            cands.push(c);
+                            sort_cands(&mut cands);
+                            let _ = enable_raw_mode();
+                            let _ = execute!(stdout(), Hide);
+                            scr = Screen::new();
+                            add_ip.clear();
+                            add_role = None;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Sel::AddRole => match k.code {
+                KeyCode::Esc => { result = None; break; }
+                KeyCode::Tab => focus = Sel::Enter,
+                KeyCode::BackTab => focus = Sel::AddIp,
+                KeyCode::Left | KeyCode::Up => add_role = cycle_free_role(&cands, add_role, false),
+                KeyCode::Right | KeyCode::Down | KeyCode::Enter => add_role = cycle_free_role(&cands, add_role, true),
+                _ => {}
+            },
+            Sel::Enter => match k.code {
+                KeyCode::Esc => { result = None; break; }
+                KeyCode::Tab => focus = Sel::Esc,
+                KeyCode::BackTab => focus = if show_add { Sel::AddIp } else { Sel::List },
+                KeyCode::Left | KeyCode::Up => focus = Sel::List,
+                KeyCode::Right => focus = Sel::Esc,
+                KeyCode::Enter => { result = Some(gather(&cands)); break; }
+                _ => {}
+            },
+            Sel::Esc => match k.code {
+                KeyCode::Esc => { result = None; break; }
+                KeyCode::Tab => focus = Sel::List,
+                KeyCode::BackTab | KeyCode::Left => focus = Sel::Enter,
+                KeyCode::Enter => { result = None; break; }
+                _ => {}
+            },
         }
     }
     scr.clear();
@@ -784,67 +847,185 @@ fn tui_select(cands: &mut [Cand], creds: &[(String, String)]) -> Option<Vec<(Rol
     result
 }
 
-fn gather(cands: &[Cand], manual: &[Cand]) -> Vec<(Role, String, (String, String))> {
+fn log_body(log: &[String]) -> Vec<String> {
+    let mut body = Vec::new();
+    body.push(fg(FG_BRIGHT, "Carregando..."));
+    body.push(String::new());
+    let start = log.len().saturating_sub(PH - 2);
+    for l in &log[start..] {
+        body.push(fg(FG_NORM, &pad(l, PW)));
+    }
+    body
+}
+
+fn sort_cands(cands: &mut [Cand]) {
+    cands.sort_by(|a, b| {
+        let rank = |c: &Cand| -> (u8, u32) {
+            let good = c.accessible() && c.suggest.is_some();
+            let r = match c.suggest {
+                Some(Role::Mgm) => 0,
+                Some(Role::N1) => 1,
+                Some(Role::N2) => 2,
+                None => 9,
+            };
+            let ipnum = c.ip.rsplit('.').next().unwrap_or("0").parse::<u32>().unwrap_or(0);
+            if good { (r, 0) } else { (8, ipnum) }
+        };
+        rank(a).cmp(&rank(b))
+    });
+}
+
+fn all_roles_taken(cands: &[Cand]) -> bool {
+    [Role::Mgm, Role::N1, Role::N2].iter().all(|r| cands.iter().any(|c| c.role == Some(*r)))
+}
+fn first_free_role(cands: &[Cand]) -> Option<Role> {
+    [Role::Mgm, Role::N1, Role::N2].into_iter().find(|r| !cands.iter().any(|c| c.role == Some(*r)))
+}
+fn cycle_free_role(cands: &[Cand], cur: Option<Role>, fwd: bool) -> Option<Role> {
+    let free: Vec<Role> = [Role::Mgm, Role::N1, Role::N2].into_iter().filter(|r| !cands.iter().any(|c| c.role == Some(*r))).collect();
+    if free.is_empty() { return None; }
+    let idx = cur.and_then(|c| free.iter().position(|r| *r == c)).unwrap_or(0);
+    let n = free.len();
+    Some(if fwd { free[(idx + 1) % n] } else { free[(idx + n - 1) % n] })
+}
+fn assign_role(cands: &mut [Cand], i: usize, r: Role) {
+    for c in cands.iter_mut() {
+        if c.role == Some(r) { c.role = None; }
+    }
+    cands[i].role = Some(r);
+}
+fn fix_roles(cands: &mut [Cand]) {
+    let mut seen: Vec<Role> = Vec::new();
+    for c in cands.iter_mut() {
+        if let Some(r) = c.role {
+            if seen.contains(&r) { c.role = None; } else { seen.push(r); }
+        }
+    }
+}
+fn gather(cands: &[Cand]) -> Vec<(Role, String, Cred)> {
     let mut out = Vec::new();
-    for c in cands.iter().chain(manual.iter()) {
-        if let (Some(r), Some(cr)) = (c.role, c.creds.clone()) {
-            out.push((r, c.ip.clone(), cr));
+    for c in cands {
+        if let Some(r) = c.role {
+            if let Some(cr) = c.cred_for(r) {
+                out.push((r, c.ip.clone(), cr.clone()));
+            }
         }
     }
     out
 }
 
-fn pick_role() -> Option<Role> {
-    let opts = [Some(Role::Mgm), Some(Role::N1), Some(Role::N2), None];
-    let names = ["MGM", "N1", "N2", "(remover papel)"];
-    let mut sel = 0usize;
-    let mut scr = Screen::new();
-    if enable_raw_mode().is_err() {
-        return None;
+fn select_body(cands: &[Cand], focus: &Sel, li: usize, top: usize, show_add: bool, add_ip: &str, add_role: Option<Role>) -> Vec<String> {
+    let list_focus = *focus == Sel::List;
+    let mut body = Vec::new();
+    // cabecalho da tabela
+    let head = format!("{}{}{}{}", pad("IP", 16), pad("hostname", 14), pad("interna", 16), "função");
+    body.push(fg(FG_DIM, &pad(&head, PW)));
+    // linhas
+    for vi in 0..LROWS {
+        let idx = top + vi;
+        if idx >= cands.len() {
+            body.push(String::new());
+            continue;
+        }
+        let c = &cands[idx];
+        let cursor = idx == li;
+        let mk = if cursor { fg(if list_focus { FG_CYAN } else { FG_CYAN_DIM }, "\u{25b6} ") } else { "  ".to_string() };
+        let txt = if c.accessible() {
+            let f = c.role.map(|r| format!("[{}]", r.name())).unwrap_or_else(|| c.suggest.map(|r| format!("(sug {})", r.name())).unwrap_or_default());
+            format!("{}{}{}{}", pad(&c.ip, 14), pad(&c.host, 14), pad(&c.intern, 16), f)
+        } else {
+            // erro ocupa o espaço das colunas (menos IP)
+            format!("{}{}", pad(&c.ip, 14), "login falhou (sem acesso)")
+        };
+        let code = if cursor && list_focus { FG_BRIGHT } else if list_focus { FG_NORM } else { FG_DIM };
+        body.push(format!("{}{}", mk, fg(code, &pad(&txt, PW - 2))));
     }
-    let _ = execute!(stdout(), Hide);
-    let res;
+    body.push(String::new());
+    // add row
+    if show_add {
+        let ipf = *focus == Sel::AddIp;
+        let rf = *focus == Sel::AddRole;
+        let ipbox = small_box("IP", add_ip, ipf, 15);
+        let rolebox = if !add_ip.is_empty() {
+            let rt = add_role.or_else(|| first_free_role(cands)).map(|r| r.name()).unwrap_or("?");
+            small_box("função", rt, rf, 6)
+        } else {
+            String::new()
+        };
+        body.push(format!("{}  {}", ipbox, rolebox));
+    } else {
+        body.push(String::new());
+    }
+    // botoes
+    let b = buttons_rows(*focus == Sel::Enter, *focus == Sel::Esc);
+    body.push(b[0].clone());
+    body.push(b[1].clone());
+    body.push(b[2].clone());
+    // hint
+    let hint = match focus {
+        Sel::List => "setas movem  -  Enter define a função  -  Tab sai da lista",
+        Sel::AddIp => "digite um IP que o scan perdeu  -  Tab vai pra função",
+        Sel::AddRole => "setas escolhem a função  -  Enter adiciona",
+        _ => "Enter confirma tudo  -  Esc cancela",
+    };
+    body.push(fg(FG_DIM, hint));
+    body
+}
+
+fn small_box(label: &str, content: &str, focus: bool, w: usize) -> String {
+    let code = if focus { FG_CYAN } else { FG_NORM };
+    let tcode = if focus { FG_BRIGHT } else { FG_NORM };
+    format!("{} {}{}{}{}", fg(FG_DIM, label), fg(code, "["), fg(tcode, &pad(content, w)), fg(code, "]"), "")
+}
+
+fn pick_role_inline(scr: &mut Screen, cands: &[Cand], li: usize) -> Option<Role> {
+    // funções livres + a atual da linha
+    let mut opts: Vec<Option<Role>> = Vec::new();
+    for r in [Role::Mgm, Role::N1, Role::N2] {
+        let taken_elsewhere = cands.iter().enumerate().any(|(i, c)| i != li && c.role == Some(r));
+        if !taken_elsewhere {
+            opts.push(Some(r));
+        }
+    }
+    opts.push(None); // remover
+    let names: Vec<String> = opts.iter().map(|o| o.map(|r| r.name().to_string()).unwrap_or_else(|| "(remover)".to_string())).collect();
+    let mut sel = cands[li].role.and_then(|r| opts.iter().position(|o| *o == Some(r))).unwrap_or(0);
     loop {
-        let mut lines = vec![fg(FG_BRIGHT, "Papel desta VM:"), String::new()];
+        let mut body = vec![fg(FG_BRIGHT, "Função desta VM:"), String::new()];
         for (i, n) in names.iter().enumerate() {
             let m = if i == sel { fg(FG_CYAN, "\u{25b6} ") } else { "  ".to_string() };
-            lines.push(format!("{}{}", m, fg(if i == sel { FG_BRIGHT } else { FG_NORM }, n)));
+            body.push(format!("{}{}", m, fg(if i == sel { FG_BRIGHT } else { FG_NORM }, n)));
         }
-        lines.push(String::new());
-        lines.push(fg(FG_DIM, "setas + Enter; Esc cancela"));
-        scr.render(&lines);
+        scr.render(&frame("Selecione as VMs", body));
         match key_press() {
             Some(k) => match k.code {
                 KeyCode::Up => { if sel > 0 { sel -= 1; } }
                 KeyCode::Down => { if sel + 1 < opts.len() { sel += 1; } }
-                KeyCode::Enter => { res = opts[sel]; break; }
-                KeyCode::Esc => { res = None; break; }
+                KeyCode::Enter => return opts[sel],
+                KeyCode::Esc => return cands[li].role,
                 _ => {}
             },
-            None => { res = None; break; }
+            None => return cands[li].role,
         }
     }
-    scr.clear();
-    let _ = execute!(stdout(), Show);
-    let _ = disable_raw_mode();
-    res
 }
 
-fn manual_add(creds: &[(String, String)]) -> Option<Cand> {
-    print!("IP para adicionar (vazio cancela): ");
-    let _ = stdout().flush();
-    let mut ip = String::new();
-    if std::io::stdin().read_line(&mut ip).is_err() {
-        return None;
+// --------------------------------------------------------------- preview
+
+fn preview() {
+    let cols = vec![
+        Cred { label: ColLabel::Mgm, user: "paulo".into(), pass: "secret".into() },
+        Cred { label: ColLabel::Any, user: String::new(), pass: String::new() },
+    ];
+    for l in frame("Credenciais", render_creds_body(&cols, 1, 0)) {
+        println!("{}", l);
     }
-    let ip = ip.trim().to_string();
-    if ip.is_empty() {
-        return None;
+    println!();
+    let cands = vec![
+        Cand { ip: "192.168.0.21".into(), host: "N2".into(), intern: "192.168.1.3".into(), suggest: Some(Role::N2), working: vec![cols[0].clone()], role: Some(Role::N2) },
+        Cand { ip: "192.168.0.20".into(), host: String::new(), intern: String::new(), suggest: None, working: vec![], role: None },
+    ];
+    for l in frame("Selecione as VMs", select_body(&cands, &Sel::List, 0, 0, true, "", None)) {
+        println!("{}", l);
     }
-    println!("testando {} ...", ip);
-    let (info, suggest, creds_ok) = probe(&ip, creds);
-    if creds_ok.is_none() {
-        println!("não consegui conectar em {} com as credenciais dadas.", ip);
-    }
-    Some(Cand { ip, info, suggest, creds: creds_ok, role: None })
 }
