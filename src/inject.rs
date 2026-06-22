@@ -23,6 +23,7 @@ const SSH_OPTS: &[&str] = &[
     "-o", "ConnectTimeout=6",
     "-o", "PubkeyAuthentication=no",
     "-o", "PreferredAuthentications=password",
+    "-o", "LogLevel=ERROR", // silencia "Permanently added" e avisos do cliente
 ];
 
 const BG: &str = "\x1b[48;5;236m";
@@ -294,16 +295,23 @@ fn probe(ip: &str, creds: &[Cred]) -> (String, String, Option<Role>, Vec<Cred>) 
 }
 
 fn inject_one(ip: &str, role: Role, user: &str, pass: &str, exe: &str) -> bool {
-    let scp = Command::new("sshpass").args(["-p", pass]).arg("scp").args(SSH_OPTS).arg(exe).arg(format!("{}@{}:/tmp/bdd", user, ip)).status();
-    if !matches!(scp, Ok(s) if s.success()) {
-        return false;
+    // saída capturada: só mostra se algo falhar (evita o ruído de avisos do ssh/sudo)
+    let scp = Command::new("sshpass").args(["-p", pass]).arg("scp").args(SSH_OPTS).arg(exe).arg(format!("{}@{}:/tmp/bdd", user, ip)).output();
+    match &scp {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => { eprint!("\n{}", String::from_utf8_lossy(&o.stderr)); return false; }
+        Err(_) => return false,
     }
     let remote = format!(
-        "echo '{p}' | sudo -S sh -c 'install -m 0755 /tmp/bdd /usr/local/bin/bdd && mkdir -p /var/lib/bdd && chmod 777 /var/lib/bdd && rm -f /tmp/bdd' && /usr/local/bin/bdd id {r} >/dev/null",
+        "echo '{p}' | sudo -S -p '' sh -c 'install -m 0755 /tmp/bdd /usr/local/bin/bdd && mkdir -p /var/lib/bdd && chmod 777 /var/lib/bdd && rm -f /tmp/bdd' && /usr/local/bin/bdd id {r} >/dev/null",
         p = pass, r = role.code()
     );
-    let ssh = Command::new("sshpass").args(["-p", pass]).arg("ssh").args(SSH_OPTS).arg(format!("{}@{}", user, ip)).arg(remote).status();
-    matches!(ssh, Ok(s) if s.success())
+    let ssh = Command::new("sshpass").args(["-p", pass]).arg("ssh").args(SSH_OPTS).arg(format!("{}@{}", user, ip)).arg(remote).output();
+    match ssh {
+        Ok(o) if o.status.success() => true,
+        Ok(o) => { eprint!("\n{}", String::from_utf8_lossy(&o.stderr)); false }
+        Err(_) => false,
+    }
 }
 
 // --------------------------------------------------------------- tela inline

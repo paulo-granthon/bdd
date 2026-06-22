@@ -22,6 +22,8 @@ log "configurando $HOST com IP interno $IP ..."
 
 echo "$HOST" > /etc/hostname
 hostnamectl set-hostname "$HOST" 2>/dev/null || hostname "$HOST"
+# evita o aviso "sudo: unable to resolve host"
+grep -q "127.0.1.1[[:space:]]\+${HOST}\b" /etc/hosts || echo "127.0.1.1 ${HOST}" >> /etc/hosts
 
 cat > /etc/network/interfaces <<EOF
 auto lo
