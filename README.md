@@ -116,7 +116,7 @@ bdd id
 |---------|-----------|
 | `bdd X.Y` | executa o passo Y do exercício X nesta máquina (ex: `bdd 3.1`) |
 | `bdd run` | executa o próximo passo se for desta máquina (sem digitar o número) |
-| `bdd validate [X] [--clean]` | imprime as provas (saída dos comandos); sem `X` = o último exercício que você rodou (não pula para o próximo intocado), com `X` (ex: `bdd validate 3`) = aquele exercício; em exercício observacional (ex: EX04) não há saída a capturar, então ele instrui você a escrever a conclusão com suas palavras e lista os passos rodados; `--clean` limpa a tela inteira (e o scrollback) e imprime só as provas, sem o cabeçalho nem a seção "Próximo" (bom para print limpo) |
+| `bdd validate [X] [--clean]` | imprime as provas (saída dos comandos); sem `X` = o último exercício que você rodou (não pula para o próximo intocado), com `X` (ex: `bdd validate 3`) = aquele exercício; em exercício observacional (ex: EX04) não há saída a capturar, então ele instrui você a escrever a conclusão com suas palavras, lista os passos rodados e sugere um rascunho por passo (gerado localmente, varia por máquina/execução, para reescrever); `--clean` limpa a tela inteira (e o scrollback) e imprime só as provas, sem o cabeçalho nem a seção "Próximo" (bom para print limpo) |
 | `bdd log` | lista todos os passos, coloridos por estado, com legenda |
 | `bdd next` | mostra só o próximo passo, e se é nesta máquina ou em outra |
 | `bdd ok` | marca o próximo passo como feito (quando ele é de **outra** máquina) |

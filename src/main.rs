@@ -171,6 +171,95 @@ fn all_ran_ex(steps: &[Step], st: &State, ex: u8) -> bool {
 fn ex_validated(st: &State, ex: u8) -> bool {
     st.validated.iter().any(|v| v == &ex.to_string())
 }
+/// Semente para os rascunhos: hostname + tempo + pid. Cada máquina/execução
+/// gera uma combinação diferente, então não saem dois textos idênticos.
+fn draft_seed() -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    if let Ok(o) = Command::new("hostname").output() {
+        o.stdout.hash(&mut h);
+    }
+    if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        d.as_nanos().hash(&mut h);
+    }
+    std::process::id().hash(&mut h);
+    h.finish()
+}
+/// Escolhe uma variante de forma determinística por (semente, passo).
+fn pick_variant<'a>(opts: &[&'a str], seed: u64, salt: &str) -> &'a str {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    if opts.is_empty() {
+        return "";
+    }
+    let mut h = DefaultHasher::new();
+    seed.hash(&mut h);
+    salt.hash(&mut h);
+    opts[(h.finish() % opts.len() as u64) as usize]
+}
+/// Frases-rascunho por passo observacional. Várias por passo, para variar entre
+/// alunos. NÃO são a resposta final: o aluno reescreve com as próprias palavras.
+fn step_draft_variants(id: &str) -> &'static [&'static str] {
+    match id {
+        "4.1" => &[
+            "Funcionou: com NoOfReplicas=2 o N1 guarda cópia completa, então sozinho atende a escrita mesmo com o N2 fora.",
+            "O INSERT no N1 foi aceito sem o N2, porque a réplica local cobre todos os fragmentos.",
+            "A escrita ocorreu normalmente; a redundância mantém o dado disponível com um único nó de dados ativo.",
+        ],
+        "4.2" => &[
+            "Funcionou: o MGM não entra na transação de dados, então a escrita segue mesmo com ele desligado.",
+            "INSERT aceito sem o MGM, pois com o cluster já no ar as operações de dados não passam por ele.",
+            "A inserção não dependeu do MGM, que cuida de gestão e arbitragem, não do caminho dos dados.",
+        ],
+        "4.3" => &[
+            "A criação da tabela concluiu com o N2 fora; o schema é sincronizado quando ele reingressa.",
+            "CREATE TABLE funcionou com um nó de dados só, ficando o N2 atualizado ao voltar.",
+            "A tabela foi criada mesmo sem o N2: um nó ativo basta e o ausente recebe o schema depois.",
+        ],
+        "4.4" => &[
+            "CREATE TABLE funcionou sem o MGM: a DDL é coordenada pelos nós de dados.",
+            "A tabela foi criada com o MGM desligado, já que ele não participa da criação de schema.",
+            "A criação concluiu sem o MGM, confirmando que DDL não depende do gerenciador.",
+        ],
+        "4.5" => &[
+            "CREATE DATABASE funcionou: é operação local do SQL node, não distribuída pelo NDB.",
+            "O database foi criado no N1 sem o N2, pois não depende do outro nó (operação local).",
+            "Criou normalmente; o database é local ao SQL node e não exige os dois nós.",
+        ],
+        "4.6" => &[
+            "CREATE DATABASE funcionou sem o MGM: operação local do SQL node, independe dele.",
+            "O database foi criado com o MGM fora, já que essa operação não envolve o gerenciador.",
+            "Criou sem problema; não há participação do MGM em CREATE DATABASE.",
+        ],
+        "4.7" => &[
+            "Funcionou com só o N1 no ar: ele tem cópia completa e segue operando, embora sem rede de segurança (sem MGM nem segundo nó).",
+            "A escrita ocorreu apenas com o N1, mostrando que um nó com réplica completa basta; porém fica frágil a falhas e reinício.",
+            "INSERT aceito só no N1; o dado é gravado, mas sem MGM e sem o N2 não há recuperação se algo cair.",
+        ],
+        "4.8" => &[
+            "CREATE TABLE no N2 funcionou sozinho: ele tem cópia completa e coordena a DDL.",
+            "A tabela foi criada só com o N2 ativo, simétrico ao caso do N1.",
+            "Concluiu apenas com o N2; um nó com réplica completa cria o schema, ainda que sem redundância no momento.",
+        ],
+        "4.9" => &[
+            "CREATE DATABASE no N2 funcionou: operação local do SQL node, independe do resto.",
+            "O database foi criado só com o N2, por ser operação local.",
+            "Criou normalmente no N2, sem precisar do MGM nem do N1.",
+        ],
+        "4.10" => &[
+            "Os 1000 registros entraram no N1; ao religar, o N2 ressincronizou e ficou com todos, comprovando replicação automática.",
+            "Inseri 1000 no N1 com o N2 fora; quando o N2 voltou, a recuperação de nó copiou tudo, e a leitura nele mostrou os 1000.",
+            "Após religar o N2, ele recuperou os 1000 registros inseridos durante a ausência, confirmando consistência na reentrada.",
+        ],
+        "4.11" => &[
+            "O MGM é necessário para iniciar/configurar o cluster e, principalmente, para arbitragem contra split-brain; com tudo estável, os dados não dependem dele.",
+            "Sem o MGM o cluster não sobe nem recupera falhas: ele registra os nós, monitora e arbitra partições, mesmo sem entrar no caminho dos dados.",
+            "O papel do MGM é gestão e arbitragem (evitar que dois lados se achem o cluster); operações de dados rodam sem ele, mas a recuperação e o reinício de nós, não.",
+        ],
+        _ => &[],
+    }
+}
 /// O que o aluno deve escrever num exercício observacional (sem saída a capturar).
 fn observational_hint(ex: u8) -> &'static str {
     match ex {
@@ -755,10 +844,20 @@ fn cmd_validate(args: &[String]) {
                 ("Passos que você rodou nesta máquina (descreva o resultado de cada um):", &role_steps)
             };
             println!("{}", titulo);
+            let seed = draft_seed();
+            let mut tem_rascunho = false;
             for s in lista.iter().filter(|s| ran.is_empty() || st.has_ran(&s.id())) {
                 println!("  - {} {}", s.id(), s.title);
+                let v = step_draft_variants(&s.id());
+                if !v.is_empty() {
+                    tem_rascunho = true;
+                    println!("      {} {}", ui::paint(ui::FADED, "rascunho:"), pick_variant(v, seed, &s.id()));
+                }
             }
             println!();
+            if tem_rascunho {
+                println!("{}", ui::paint(ui::FADED, "Os rascunhos são gerados localmente e variam por máquina/execução; reescreva com suas palavras antes de entregar."));
+            }
             println!("{}", ui::paint(ui::FADED, "Dica: junte também os prints de cada 'bdd X.Y' que você rodou neste exercício."));
         }
     }
