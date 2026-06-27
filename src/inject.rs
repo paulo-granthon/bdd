@@ -570,11 +570,17 @@ fn tui_creds() -> Option<Vec<Cred>> {
     }
 }
 
-/// mantém: colunas preenchidas + no máximo UMA vazia (no fim).
+/// mantém: colunas preenchidas + no máximo UMA vazia (no fim). A vazia
+/// preserva o rótulo já escolhido, para o Enter conseguir ciclar o enum nela.
 fn compact_cols(cols: &mut Vec<Cred>) {
-    let mut kept: Vec<Cred> = cols.drain(..).filter(|c| c.filled()).collect();
+    let mut kept: Vec<Cred> = cols.iter().filter(|c| c.filled()).cloned().collect();
     if kept.len() < 3 {
-        kept.push(Cred { label: ColLabel::Any, user: String::new(), pass: String::new() });
+        let empty = cols.iter().find(|c| !c.filled()).cloned().unwrap_or(Cred {
+            label: ColLabel::Any,
+            user: String::new(),
+            pass: String::new(),
+        });
+        kept.push(empty);
     }
     *cols = kept;
 }
