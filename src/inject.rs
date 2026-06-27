@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crossterm::cursor::{Hide, MoveToColumn, MoveToPreviousLine, Show};
-use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{poll, read, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::Print;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 use crossterm::{execute, queue};
@@ -129,16 +129,19 @@ pub fn run() {
         None => { eprintln!("[inject] não achei a rede do host."); return; }
     };
 
-    let creds = match tui_creds() {
-        Some(c) if !c.is_empty() => c,
-        _ => { println!("[inject] cancelado."); return; }
-    };
-
     let exclude: HashSet<String> = host_ips.into_iter().collect();
-    let chosen = match tui_select(&base, &exclude, &creds) {
-        Some(v) if !v.is_empty() => v,
-        Some(_) => { println!("[inject] nada selecionado."); return; }
-        None => { println!("[inject] cancelado."); return; }
+    // creds -> seleção; se a busca for cancelada (Ctrl+C), volta a pedir as credenciais.
+    let chosen = loop {
+        let creds = match tui_creds() {
+            Some(c) if !c.is_empty() => c,
+            _ => { println!("[inject] cancelado."); return; }
+        };
+        match tui_select(&base, &exclude, &creds) {
+            SelectOutcome::Chosen(v) => break v,
+            SelectOutcome::Empty => { println!("[inject] nada selecionado."); return; }
+            SelectOutcome::Cancel => { println!("[inject] cancelado."); return; }
+            SelectOutcome::Back => continue,
+        }
     };
 
     println!();
@@ -348,18 +351,29 @@ impl Screen {
     }
 }
 
-/// Roda `job` numa thread e anima um spinner no título até terminar.
-fn spin<T: Send + 'static>(scr: &mut Screen, log: &[String], job: impl FnOnce() -> T + Send + 'static) -> T {
+/// Roda `job` numa thread e anima um spinner no título até terminar. Ctrl+C
+/// aborta: devolve None e abandona a thread (que termina sozinha em background).
+fn spin<T: Send + 'static>(scr: &mut Screen, log: &[String], job: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let h = std::thread::spawn(job);
     let frames = ['\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}', '\u{2807}', '\u{280f}'];
     let mut i = 0usize;
     while !h.is_finished() {
-        let title = format!("Procurando VMs {}", frames[i % frames.len()]);
+        let title = format!("Procurando VMs (Ctrl+C cancela) {}", frames[i % frames.len()]);
         scr.render(&frame(&title, log_body(log)));
-        std::thread::sleep(Duration::from_millis(90));
+        // poll dá a cadência de ~90ms e ainda capta Ctrl+C durante a espera.
+        if poll(Duration::from_millis(90)).unwrap_or(false) {
+            if let Ok(Event::Key(k)) = read() {
+                if k.kind == KeyEventKind::Press
+                    && k.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(k.code, KeyCode::Char('c') | KeyCode::Char('C'))
+                {
+                    return None;
+                }
+            }
+        }
         i += 1;
     }
-    h.join().unwrap()
+    Some(h.join().unwrap())
 }
 
 fn key_press() -> Option<crossterm::event::KeyEvent> {
@@ -531,8 +545,8 @@ fn tui_creds() -> Option<Vec<Cred>> {
                     if col == 0 { result = Some(collect(&cols)); } else { result = None; }
                     break;
                 } else {
-                    result = Some(collect(&cols));
-                    break;
+                    // num campo (user/senha): Enter age como Tab, não confirma.
+                    tab_next(&mut row, &mut col, ncols);
                 }
             }
             KeyCode::Backspace => {
@@ -662,7 +676,7 @@ fn render_creds_body(cols: &[Cred], frow: usize, fcol: usize) -> Vec<String> {
     body.push(b[1].clone());
     body.push(b[2].clone());
     let hint = match frow {
-        1 | 2 => fg(FG_DIM, "Ctrl+U limpa o campo  -  Tab move  -  Enter confirma"),
+        1 | 2 => fg(FG_DIM, "Ctrl+U limpa  -  Tab/Enter move  -  confirma no botao"),
         0 => fg(FG_DIM, "Enter cicla o rotulo (so opcoes livres)  -  Tab move"),
         _ => String::new(),
     };
@@ -729,10 +743,26 @@ enum Sel {
     Esc,
 }
 
-fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<Vec<(Role, String, Cred)>> {
+/// Resultado da tela de seleção.
+enum SelectOutcome {
+    Chosen(Vec<(Role, String, Cred)>),
+    Empty,  // confirmou sem nada selecionado
+    Cancel, // Esc: aborta o inject
+    Back,   // Ctrl+C na busca: volta para as credenciais
+}
+
+/// Limpa a tela, mostra o cursor e sai do raw mode; devolve Back.
+fn cleanup_back(scr: &mut Screen) -> SelectOutcome {
+    scr.clear();
+    let _ = execute!(stdout(), Show);
+    let _ = disable_raw_mode();
+    SelectOutcome::Back
+}
+
+fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> SelectOutcome {
     let mut scr = Screen::new();
     if enable_raw_mode().is_err() {
-        return None;
+        return SelectOutcome::Cancel;
     }
     let _ = execute!(stdout(), Hide);
 
@@ -741,7 +771,10 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
     log.push("escaneando a rede...".to_string());
     let base2 = base.to_string();
     let ex = exclude.clone();
-    let ips = spin(&mut scr, &log, move || scan(&base2, &ex));
+    let ips = match spin(&mut scr, &log, move || scan(&base2, &ex)) {
+        Some(v) => v,
+        None => return cleanup_back(&mut scr),
+    };
     log.push(format!("{} host(s) com SSH encontrados.", ips.len()));
 
     let mut cands: Vec<Cand> = Vec::new();
@@ -749,7 +782,10 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
         log.push(format!("testando credenciais em {} ...", ip));
         let ipc = ip.clone();
         let cr = creds.to_vec();
-        let (host, intern, suggest, working) = spin(&mut scr, &log, move || probe(&ipc, &cr));
+        let (host, intern, suggest, working) = match spin(&mut scr, &log, move || probe(&ipc, &cr)) {
+            Some(t) => t,
+            None => return cleanup_back(&mut scr),
+        };
         if working.is_empty() {
             log.push(format!("  {}: sem acesso", ip));
         } else {
@@ -777,7 +813,8 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
     let mut top = 0usize;
     let mut add_ip = String::new();
     let mut add_role: Option<Role> = None;
-    let result;
+    let mut result: Option<Vec<(Role, String, Cred)>> = None;
+    let mut go_back = false;
     loop {
         let total = cands.len();
         if li >= total && total > 0 { li = total - 1; }
@@ -790,7 +827,11 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
 
         scr.render(&frame("Selecione as VMs", select_body(&cands, &focus, li, top, show_add, &add_ip, add_role)));
 
-        let k = match key_press() { Some(k) => k, None => { result = None; break; } };
+        let k = match key_press() { Some(k) => k, None => { break; } };
+        if k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c') | KeyCode::Char('C')) {
+            go_back = true;
+            break;
+        }
         match focus {
             Sel::List => match k.code {
                 KeyCode::Esc => { result = None; break; }
@@ -864,7 +905,14 @@ fn tui_select(base: &str, exclude: &HashSet<String>, creds: &[Cred]) -> Option<V
     scr.clear();
     let _ = execute!(stdout(), Show);
     let _ = disable_raw_mode();
-    result
+    if go_back {
+        return SelectOutcome::Back;
+    }
+    match result {
+        None => SelectOutcome::Cancel,
+        Some(v) if v.is_empty() => SelectOutcome::Empty,
+        Some(v) => SelectOutcome::Chosen(v),
+    }
 }
 
 fn log_body(log: &[String]) -> Vec<String> {
