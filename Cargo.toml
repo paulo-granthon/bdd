@@ -1,6 +1,6 @@
 [package]
 name = "bdd"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "CLI para os exercícios de Projeto de Banco de Dados Distribuídos (FATEC-SJC)"
 

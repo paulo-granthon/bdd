@@ -3,11 +3,20 @@
 Configura três VMs com Cassandra em modo cluster, cria um keyspace replicado e
 testa a replicação e a consistência.
 
-> Este exercício usa **outro conjunto de VMs** (a OVA do Cassandra, com o
-> Cassandra já instalado), não as VMs do MySQL Cluster. Os IPs internos seguem o
-> mesmo esquema (`192.168.1.1/.2/.3`), então o `bdd` identifica os papéis pelo
-> IP: **node1 = .1 (seed) = papel MGM**, **node2 = .2 = N1**, **node3 = .3 = N2**.
-> Injete/instale o `bdd` nessas VMs do mesmo jeito (`./inject.sh` no host).
+> Este exercício normalmente usa **outro conjunto de VMs** (a OVA do Cassandra,
+> com o Cassandra já instalado), não as VMs do MySQL Cluster. Os IPs internos
+> seguem o mesmo esquema (`192.168.1.1/.2/.3`), então o `bdd` identifica os
+> papéis pelo IP: **node1 = .1 (seed) = papel MGM**, **node2 = .2 = N1**,
+> **node3 = .3 = N2**. Injete/instale o `bdd` nessas VMs do mesmo jeito
+> (`./inject.sh` no host).
+>
+> **Sem a OVA?** Dá para usar quaisquer 3 VMs (inclusive as do MySQL Cluster):
+> o passo `bdd 8.2` instala o Cassandra (Java 8 + Cassandra 3.11 pelo repo
+> oficial Apache) automaticamente quando ele não está presente. Se reaproveitar
+> as VMs do MySQL, **pare antes os serviços do cluster** (ndbd/mysqld) para
+> liberar memória, pois o Cassandra precisa de RAM. node1/node2/node3 = papel
+> MGM/N1/N2 é só o rótulo que o `bdd` reusa; não há nó "gerenciador" no Cassandra,
+> o node1 é apenas o seed.
 
 ## Como testar (resumo)
 

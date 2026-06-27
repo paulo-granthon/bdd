@@ -18,7 +18,27 @@ case "${BDD_ROLE:-}" in
   *)   erro "papel da máquina indefinido. Rode 'bdd id' antes." ;;
 esac
 YAML=/etc/cassandra/cassandra.yaml
-[ -f "$YAML" ] || erro "não achei $YAML (o Cassandra está instalado nesta VM?)"
+
+# Sem a OVA do Cassandra: se não estiver instalado, instala (Java 8 + Cassandra
+# 3.11 pelo repositório oficial Apache). Idempotente.
+instala_cassandra() {
+  command -v cqlsh >/dev/null 2>&1 && [ -f "$YAML" ] && return 0
+  log "Cassandra não encontrado; instalando (Java 8 + Cassandra 3.11)..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y || true
+  apt-get install -y openjdk-8-jdk-headless apt-transport-https ca-certificates curl gnupg \
+    || apt-get install -y openjdk-8-jre-headless ca-certificates curl \
+    || true
+  echo "deb https://debian.cassandra.apache.org 311x main" > /etc/apt/sources.list.d/cassandra.sources.list
+  # chave do repo (apt-key é depreciado mas funciona no 16.04); tenta 2 origens.
+  { curl -fsSL https://downloads.apache.org/cassandra/KEYS \
+      || curl -fsSL https://archive.apache.org/dist/cassandra/KEYS; } 2>/dev/null | apt-key add - 2>/dev/null || true
+  apt-get update -y || true
+  apt-get install -y cassandra || erro "falha ao instalar o Cassandra via apt (veja a saída acima)."
+  log "Cassandra instalado."
+}
+instala_cassandra
+[ -f "$YAML" ] || erro "não achei $YAML mesmo após a instalação. Veja a saída acima."
 
 log "parando o Cassandra e limpando dados antigos..."
 { service cassandra stop 2>/dev/null || /etc/init.d/cassandra stop 2>/dev/null; } || true
