@@ -626,16 +626,12 @@ fn cmd_upgrade() {
         .ok()
         .and_then(|p| p.to_str().map(String::from))
         .unwrap_or_else(|| "/usr/local/bin/bdd".to_string());
-    println!("{}", ui::paint(ui::CYAN, &format!("Atualizando o bdd (atual: {}) ...", VERSION)));
+    println!("{}", ui::paint(ui::CYAN, &format!("Versão atual: {}", VERSION)));
 
-    // Baixa pro /tmp (sem sudo) e instala via rename no MESMO diretório do
-    // destino: troca a entrada sem reabrir o binário em uso (evita ETXTBSY).
-    let script = r#"
+    // 1) Baixa pro /tmp (sem sudo) e compara a versão ANTES de instalar.
+    let fetch = r#"
 set -eu
 URL="https://paulo-granthon.github.io/bdd/bin"
-# sudo só quando o diretório do destino não é gravável pelo usuário.
-SUDO=""
-if [ ! -w "$(dirname "$DEST")" ] && [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
 fetch() {
   if command -v curl >/dev/null 2>&1; then curl -fsSL "$URL" -o /tmp/bdd.new
   elif command -v wget >/dev/null 2>&1; then wget -qO /tmp/bdd.new "$URL" || wget -q --secure-protocol=TLSv1_2 -O /tmp/bdd.new "$URL"
@@ -647,21 +643,41 @@ for try in 1 2 3 4 5 6; do
   echo "ainda nao disponivel (tentativa $try), aguardando 10s..."; sleep 10
 done
 [ "$ok" = 1 ] || { echo "nao consegui baixar o binario" >&2; exit 1; }
+chmod 0755 /tmp/bdd.new
+"#;
+    if !Command::new("sh").arg("-c").arg(fetch).status().map(|s| s.success()).unwrap_or(false) {
+        eprintln!("{}", ui::paint(ui::RED, "Falha ao baixar o binário."));
+        return;
+    }
+
+    let latest = Command::new("/tmp/bdd.new")
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if latest == format!("bdd {}", VERSION) {
+        let _ = std::fs::remove_file("/tmp/bdd.new");
+        println!("{}", ui::paint(ui::GREEN, "Já está na última versão. Nada a fazer."));
+        return;
+    }
+
+    // 2) Instala via rename no MESMO diretório do destino: troca a entrada sem
+    // reabrir o binário em uso (evita ETXTBSY). sudo só se o dir não é gravável.
+    let install = r#"
+set -eu
+SUDO=""
+if [ ! -w "$(dirname "$DEST")" ] && [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
 $SUDO sh -c 'cp /tmp/bdd.new "$0.tmp" && chmod 0755 "$0.tmp" && mv "$0.tmp" "$0"' "$DEST"
 rm -f /tmp/bdd.new
 "#;
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(script)
-        .env("DEST", &dest)
-        .status();
-    match status {
+    match Command::new("sh").arg("-c").arg(install).env("DEST", &dest).status() {
         Ok(s) if s.success() => {
-            print!("{} ", ui::paint(ui::GREEN, "Pronto. Versão agora:"));
+            print!("{} ", ui::paint(ui::GREEN, "Atualizado. Versão agora:"));
             let _ = std::io::stdout().flush();
             let _ = Command::new(&dest).arg("--version").status();
         }
-        _ => eprintln!("{}", ui::paint(ui::RED, "Falha ao atualizar o bdd.")),
+        _ => eprintln!("{}", ui::paint(ui::RED, "Falha ao instalar a atualização.")),
     }
 }
 
