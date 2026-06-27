@@ -25,6 +25,7 @@ fn main() {
         "check" => cmd_check(),
         "validate" | "validar" => cmd_validate(&args[1..]),
         "run" => cmd_run_next(),
+        "upgrade" | "update" => cmd_upgrade(),
         "id" => cmd_id(args.get(1).map(|s| s.as_str())),
         "inject" => inject::run(),
         s if is_step_id(s) => cmd_run(s),
@@ -53,6 +54,7 @@ fn usage() {
     println!("  bdd validate [X] [--clean]  imprime as provas (saída); X = EX0X; --clean limpa a tela e mostra só as provas");
     println!("  bdd ok      marca o próximo passo como feito (passo de OUTRA máquina)");
     println!("  bdd check   valida a máquina, adota o que já está pronto e ajusta o next");
+    println!("  bdd upgrade baixa a última versão do bdd e se substitui (pede sudo se preciso)");
     println!("  bdd id      mostra/define qual máquina é esta (MGM/N1/N2)");
     println!("  bdd inject  (no HOST) instala o bdd nas VMs por SSH (TUI)");
     println!();
@@ -613,6 +615,53 @@ fn cmd_run_next() {
             // exercício todo feito, falta validar: roda a validação
             cmd_validate(&[]);
         }
+    }
+}
+
+// ----------------------------------------------------------------- upgrade
+
+fn cmd_upgrade() {
+    // Onde o bdd está instalado (substitui a si mesmo); cai no padrão se não der.
+    let dest = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(String::from))
+        .unwrap_or_else(|| "/usr/local/bin/bdd".to_string());
+    println!("{}", ui::paint(ui::CYAN, &format!("Atualizando o bdd (atual: {}) ...", VERSION)));
+
+    // Baixa pro /tmp (sem sudo) e instala via rename no MESMO diretório do
+    // destino: troca a entrada sem reabrir o binário em uso (evita ETXTBSY).
+    let script = r#"
+set -eu
+URL="https://paulo-granthon.github.io/bdd/bin"
+# sudo só quando o diretório do destino não é gravável pelo usuário.
+SUDO=""
+if [ ! -w "$(dirname "$DEST")" ] && [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+fetch() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL "$URL" -o /tmp/bdd.new
+  elif command -v wget >/dev/null 2>&1; then wget -qO /tmp/bdd.new "$URL" || wget -q --secure-protocol=TLSv1_2 -O /tmp/bdd.new "$URL"
+  else echo "preciso de curl ou wget (sudo apt-get install -y curl)" >&2; exit 2; fi
+}
+ok=0
+for try in 1 2 3 4 5 6; do
+  if fetch && [ -s /tmp/bdd.new ]; then ok=1; break; fi
+  echo "ainda nao disponivel (tentativa $try), aguardando 10s..."; sleep 10
+done
+[ "$ok" = 1 ] || { echo "nao consegui baixar o binario" >&2; exit 1; }
+$SUDO sh -c 'cp /tmp/bdd.new "$0.tmp" && chmod 0755 "$0.tmp" && mv "$0.tmp" "$0"' "$DEST"
+rm -f /tmp/bdd.new
+"#;
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .env("DEST", &dest)
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            print!("{} ", ui::paint(ui::GREEN, "Pronto. Versão agora:"));
+            let _ = std::io::stdout().flush();
+            let _ = Command::new(&dest).arg("--version").status();
+        }
+        _ => eprintln!("{}", ui::paint(ui::RED, "Falha ao atualizar o bdd.")),
     }
 }
 

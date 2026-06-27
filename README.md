@@ -121,6 +121,7 @@ bdd id
 | `bdd next` | mostra só o próximo passo, e se é nesta máquina ou em outra |
 | `bdd ok` | marca o próximo passo como feito (quando ele é de **outra** máquina) |
 | `bdd check` | valida a máquina, adota o que já está pronto e ajusta o `next` |
+| `bdd upgrade` | baixa a última versão do binário (do GitHub Pages) e se substitui; usa `sudo` só se o diretório de instalação não for gravável |
 | `bdd id` | mostra/define qual máquina é esta (`bdd id` interativo, `bdd id mgm` direto) |
 
 Depois de qualquer comando, o `bdd` imprime o **próximo passo** a executar.
