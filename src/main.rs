@@ -23,7 +23,7 @@ fn main() {
         "next" => cmd_next(),
         "ok" => cmd_ok(),
         "check" => cmd_check(),
-        "validate" | "validar" => cmd_validate(),
+        "validate" | "validar" => cmd_validate(&args[1..]),
         "run" => cmd_run_next(),
         "id" => cmd_id(args.get(1).map(|s| s.as_str())),
         "inject" => inject::run(),
@@ -50,7 +50,7 @@ fn usage() {
     println!("  bdd run     executa o próximo passo, se for desta máquina (sem digitar o número)");
     println!("  bdd log     lista todos os passos e o estado de cada um");
     println!("  bdd next    mostra o próximo passo a executar");
-    println!("  bdd validate  imprime as provas (saída) do exercício atual, para capturar");
+    println!("  bdd validate [X] [--clean]  imprime as provas (saída); X = EX0X; --clean limpa a tela e mostra só as provas");
     println!("  bdd ok      marca o próximo passo como feito (passo de OUTRA máquina)");
     println!("  bdd check   valida a máquina, adota o que já está pronto e ajusta o next");
     println!("  bdd id      mostra/define qual máquina é esta (MGM/N1/N2)");
@@ -595,14 +595,19 @@ fn cmd_run_next() {
         }
         None => {
             // exercício todo feito, falta validar: roda a validação
-            cmd_validate();
+            cmd_validate(&[]);
         }
     }
 }
 
 // ----------------------------------------------------------------- validate
 
-fn cmd_validate() {
+fn cmd_validate(args: &[String]) {
+    // --clean: limpa a tela toda (e o scrollback) e imprime só as provas, sem o
+    // cabeçalho "Provas do EX0X..." nem a seção "Próximo".
+    let clean = args.iter().any(|a| a == "--clean");
+    let arg = args.iter().map(|s| s.as_str()).find(|a| !a.starts_with("--"));
+
     let steps = manifest();
     let mut st = State::load();
     let (role, _) = current_role();
@@ -615,9 +620,29 @@ fn cmd_validate() {
         }
     };
     let exs = model::exercises(&steps);
-    let ex = current_exercise(&steps, &st).unwrap_or_else(|| *exs.last().unwrap());
+    // Sem argumento: exercício atual. Com argumento (ex: "3" ou "EX03"): aquele exercício.
+    let ex = match arg {
+        None => current_exercise(&steps, &st).unwrap_or_else(|| *exs.last().unwrap()),
+        Some(a) => {
+            let n: Option<u8> = a.trim_start_matches(|c: char| !c.is_ascii_digit()).parse().ok();
+            match n.filter(|n| exs.contains(n)) {
+                Some(n) => n,
+                None => {
+                    eprintln!("{}", ui::paint(ui::RED, &format!("Exercício inválido: '{}'", a)));
+                    ui::proximo(&[format!("exercícios: {}", exs.iter().map(|e| format!("EX0{}", e)).collect::<Vec<_>>().join(", "))]);
+                    return;
+                }
+            }
+        }
+    };
 
-    ui::header(&format!("Provas do EX0{} (capture a saída abaixo)", ex));
+    if clean {
+        // \x1b[2J apaga a tela, \x1b[3J o scrollback, \x1b[H leva o cursor ao topo.
+        print!("\x1b[2J\x1b[3J\x1b[H");
+        let _ = std::io::stdout().flush();
+    } else {
+        ui::header(&format!("Provas do EX0{} (capture a saída abaixo)", ex));
+    }
     let _ = Command::new("sh").arg("-c").arg("hostname -I").status();
     println!();
 
@@ -636,8 +661,10 @@ fn cmd_validate() {
         st.validated.push(ex.to_string());
         st.save();
     }
-    ui::proximo(&[
-        "capture a saída acima como prova".to_string(),
-        "próximo passo / exercício: bdd next".to_string(),
-    ]);
+    if !clean {
+        ui::proximo(&[
+            "capture a saída acima como prova".to_string(),
+            "próximo passo / exercício: bdd next".to_string(),
+        ]);
+    }
 }
