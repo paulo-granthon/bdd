@@ -169,6 +169,22 @@ fn all_ran_ex(steps: &[Step], st: &State, ex: u8) -> bool {
 fn ex_validated(st: &State, ex: u8) -> bool {
     st.validated.iter().any(|v| v == &ex.to_string())
 }
+/// O que o aluno deve escrever num exercício observacional (sem saída a capturar).
+fn observational_hint(ex: u8) -> &'static str {
+    match ex {
+        4 => "Cenários de cluster degradado (nós de dados e/ou MGM desligados). Para cada passo, escreva o que aconteceu: a operação foi aceita ou recusada, qual foi a mensagem/erro, e por que o cluster se comportou assim (réplicas, papel do MGM, etc.).",
+        _ => "Exercício observacional. Para cada passo, escreva com suas palavras o que você observou ao rodar e por que o sistema se comportou daquele jeito.",
+    }
+}
+/// Último exercício com pelo menos um passo já executado nesta máquina (o que
+/// acabamos de fazer / estamos fazendo). Evita o `validate` pular para um
+/// exercício onde nada rodou ainda.
+fn last_ran_exercise(steps: &[Step], st: &State) -> Option<u8> {
+    model::exercises(steps)
+        .into_iter()
+        .rev()
+        .find(|&ex| steps.iter().any(|s| s.ex == ex && st.has_ran(&s.id())))
+}
 /// Primeiro exercício que ainda não está (todo feito E validado).
 fn current_exercise(steps: &[Step], st: &State) -> Option<u8> {
     for ex in model::exercises(steps) {
@@ -622,7 +638,11 @@ fn cmd_validate(args: &[String]) {
     let exs = model::exercises(&steps);
     // Sem argumento: exercício atual. Com argumento (ex: "3" ou "EX03"): aquele exercício.
     let ex = match arg {
-        None => current_exercise(&steps, &st).unwrap_or_else(|| *exs.last().unwrap()),
+        // Padrão: o exercício que acabamos de fazer (último com passo executado),
+        // não o próximo ainda intocado; cai para o atual/último se nada rodou.
+        None => last_ran_exercise(&steps, &st)
+            .or_else(|| current_exercise(&steps, &st))
+            .unwrap_or_else(|| *exs.last().unwrap()),
         Some(a) => {
             let n: Option<u8> = a.trim_start_matches(|c: char| !c.is_ascii_digit()).parse().ok();
             match n.filter(|n| exs.contains(n)) {
@@ -646,15 +666,36 @@ fn cmd_validate(args: &[String]) {
     let _ = Command::new("sh").arg("-c").arg("hostname -I").status();
     println!();
 
+    let role_steps: Vec<&Step> = steps.iter().filter(|s| s.ex == ex && s.for_role(role)).collect();
     let mut any = false;
-    for s in steps.iter().filter(|s| s.ex == ex && s.for_role(role) && !s.proof.is_empty()) {
+    for s in role_steps.iter().filter(|s| !s.proof.is_empty()) {
         any = true;
         println!("{}", ui::paint(ui::BOLD, &format!("--- {} {} ---", s.id(), s.title)));
         let _ = Command::new("bash").arg("-c").arg(s.proof).env("BDD_ROLE", role.code()).env("BDD_STEP", &s.id()).status();
         println!();
     }
     if !any {
-        println!("{}", ui::paint(ui::FADED, "Nenhuma prova desta máquina neste exercício."));
+        if role_steps.is_empty() {
+            println!("{}", ui::paint(ui::FADED, "Nenhuma prova desta máquina neste exercício."));
+        } else {
+            // Exercício observacional: não há saída de comando para capturar; a
+            // prova é a conclusão que o aluno escreve sobre o que observou.
+            println!("{}", ui::paint(ui::YELLOW, "Exercício observacional: a prova é a sua conclusão, escrita com suas palavras."));
+            println!("{}", observational_hint(ex));
+            println!();
+            let ran: Vec<&&Step> = role_steps.iter().filter(|s| st.has_ran(&s.id())).collect();
+            let (titulo, lista) = if ran.is_empty() {
+                ("Passos desta máquina neste exercício (rode-os e descreva cada resultado):", &role_steps)
+            } else {
+                ("Passos que você rodou nesta máquina (descreva o resultado de cada um):", &role_steps)
+            };
+            println!("{}", titulo);
+            for s in lista.iter().filter(|s| ran.is_empty() || st.has_ran(&s.id())) {
+                println!("  - {} {}", s.id(), s.title);
+            }
+            println!();
+            println!("{}", ui::paint(ui::FADED, "Dica: junte também os prints de cada 'bdd X.Y' que você rodou neste exercício."));
+        }
     }
 
     if !ex_validated(&st, ex) {
