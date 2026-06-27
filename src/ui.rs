@@ -12,12 +12,14 @@ pub const RED: &str = "\x1b[31m";
 pub const DARK_RED: &str = "\x1b[38;5;88m"; // vermelho mais escuro
 pub const FADED: &str = "\x1b[2m"; // texto apagado (default apagado)
 pub const FADED_RED: &str = "\x1b[2;31m";
+pub const MAGENTA: &str = "\x1b[35m"; // passos opcionais
 
 pub const CHECK: &str = "✓";
 pub const CROSS: &str = "✗";
 pub const ARROW: &str = "←";
 pub const BALL: &str = "●";
 pub const BANG: &str = "!";
+pub const DIAMOND: &str = "◇"; // marcador de passo opcional
 
 pub fn paint(color: &str, s: &str) -> String {
     format!("{}{}{}", color, s, RESET)

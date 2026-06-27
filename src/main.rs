@@ -92,7 +92,7 @@ fn current_role() -> (Option<Role>, &'static str) {
 }
 
 fn next_step(steps: &[Step], st: &State) -> Option<usize> {
-    steps.iter().position(|s| !st.has_ran(&s.id()))
+    steps.iter().position(|s| !s.optional && !st.has_ran(&s.id()))
 }
 
 // ----------------------------------------------------------------- run X.Y
@@ -166,7 +166,7 @@ fn exec_step(step: &Step, role: Role, steps: &[Step]) {
 // ----------------------------------------------------------------- exercícios
 
 fn all_ran_ex(steps: &[Step], st: &State, ex: u8) -> bool {
-    steps.iter().filter(|s| s.ex == ex).all(|s| st.has_ran(&s.id()))
+    steps.iter().filter(|s| s.ex == ex && !s.optional).all(|s| st.has_ran(&s.id()))
 }
 fn ex_validated(st: &State, ex: u8) -> bool {
     st.validated.iter().any(|v| v == &ex.to_string())
@@ -287,7 +287,7 @@ fn current_exercise(steps: &[Step], st: &State) -> Option<u8> {
 }
 /// Índice do primeiro passo não feito dentro do exercício.
 fn first_pending_in_ex(steps: &[Step], st: &State, ex: u8) -> Option<usize> {
-    steps.iter().position(|s| s.ex == ex && !st.has_ran(&s.id()))
+    steps.iter().position(|s| s.ex == ex && !s.optional && !st.has_ran(&s.id()))
 }
 
 fn run_script(script: &str, role: Role, id: &str) -> bool {
@@ -486,7 +486,7 @@ fn cmd_log() {
     let st = State::load();
     let (role, origin) = current_role();
     let next_idx = next_step(&steps, &st);
-    let last_ran_idx = steps.iter().enumerate().rev().find(|(_, s)| st.has_ran(&s.id())).map(|(i, _)| i);
+    let last_ran_idx = steps.iter().enumerate().rev().find(|(_, s)| !s.optional && st.has_ran(&s.id())).map(|(i, _)| i);
 
     ui::header("Passos dos exercícios");
     match role {
@@ -503,7 +503,10 @@ fn cmd_log() {
         }
         let id = s.id();
         let line: String;
-        if st.has_ran(&id) {
+        if s.optional {
+            let estado = if st.has_ran(&id) { "feito" } else { "não obrigatório" };
+            line = ui::paint(ui::MAGENTA, &format!("  {} {} opcional ({})  {}", id, ui::DIAMOND, estado, s.title));
+        } else if st.has_ran(&id) {
             line = ui::paint(ui::GREEN, &format!("  {} {}  {}", id, ui::CHECK, s.title));
         } else if Some(i) == next_idx {
             if role.map(|r| s.for_role(r)).unwrap_or(false) {
@@ -534,6 +537,7 @@ fn legenda() {
     println!("  {}   não roda nesta máquina", ui::paint(ui::FADED_RED, "x.y"));
     println!("  {}   assumido feito (já avançamos além dele)", ui::paint(ui::BLUE, "x.y"));
     println!("  {}   ainda não feito", ui::paint(ui::FADED, "x.y"));
+    println!("  {}   opcional (o next não cobra; rode se quiser)", ui::paint(ui::MAGENTA, &format!("x.y {}", ui::DIAMOND)));
 }
 
 // ----------------------------------------------------------------- check
@@ -579,9 +583,9 @@ fn cmd_check() {
         }
     }
 
-    // 2) recalcula next/last_ran já com as adoções
+    // 2) recalcula next/last_ran já com as adoções (passos opcionais não contam)
     let next_idx = next_step(&steps, &st).unwrap_or(steps.len());
-    let last_ran = steps.iter().enumerate().rev().find(|(_, s)| st.has_ran(&s.id())).map(|(i, _)| i);
+    let last_ran = steps.iter().enumerate().rev().find(|(_, s)| !s.optional && st.has_ran(&s.id())).map(|(i, _)| i);
 
     let cur_ex = current_exercise(&steps, &st);
     let mut high_plus = false;
@@ -593,6 +597,10 @@ fn cmd_check() {
 
     // linha de um passo (usada quando o exercício é expandido)
     let step_line = |i: usize, s: &Step| -> String {
+        if s.optional {
+            let estado = if st.has_ran(&s.id()) { "feito" } else { "não obrigatório, rode se quiser" };
+            return ui::paint(ui::MAGENTA, &format!("  {} {} opcional ({}): {}", s.id(), ui::DIAMOND, estado, s.title));
+        }
         if !s.for_role(role) {
             if st.has_ran(&s.id()) {
                 ui::paint(ui::GREEN, &format!("  {} {}  feito em outra máquina ({}): {}", s.id(), ui::CHECK, s.machines_label(), s.title))
@@ -614,7 +622,7 @@ fn cmd_check() {
     for ex in model::exercises(&steps) {
         let idxs: Vec<usize> = steps.iter().enumerate().filter(|(_, s)| s.ex == ex).map(|(i, _)| i).collect();
         // problema = passo desta máquina que deveria estar pronto mas falhou (ordem furada)
-        let problem = idxs.iter().any(|&i| steps[i].for_role(role) && !is_done(i, &steps[i]) && last_ran.map(|li| i < li).unwrap_or(false));
+        let problem = idxs.iter().any(|&i| !steps[i].optional && steps[i].for_role(role) && !is_done(i, &steps[i]) && last_ran.map(|li| i < li).unwrap_or(false));
         if problem {
             high_plus = true;
         }
@@ -639,6 +647,7 @@ fn cmd_check() {
     println!("  {}   a fazer agora (próximo desta máquina)", ui::paint(ui::YELLOW, &format!("x.y {}", ui::BALL)));
     println!("  {}   incompleto antes de um passo já feito (ordem furada)", ui::paint(ui::DARK_RED, &format!("x.y {}{}", ui::CROSS, ui::BANG)));
     println!("  {}   ainda não iniciado, ou passo de outra máquina", ui::paint(ui::FADED, "x.y"));
+    println!("  {}   opcional (não conta para concluir o exercício)", ui::paint(ui::MAGENTA, &format!("x.y {}", ui::DIAMOND)));
     println!();
     let resumo = if high_plus {
         ui::paint(ui::DARK_RED, &format!("{} Há passo concluído depois de um incompleto. Conserte o que falhou antes de seguir.", ui::BANG))
@@ -820,7 +829,7 @@ fn cmd_validate(args: &[String]) {
     let _ = Command::new("sh").arg("-c").arg("hostname -I").status();
     println!();
 
-    let role_steps: Vec<&Step> = steps.iter().filter(|s| s.ex == ex && s.for_role(role)).collect();
+    let role_steps: Vec<&Step> = steps.iter().filter(|s| s.ex == ex && !s.optional && s.for_role(role)).collect();
     let mut any = false;
     for s in role_steps.iter().filter(|s| !s.proof.is_empty()) {
         any = true;

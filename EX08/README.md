@@ -21,6 +21,7 @@ testa a replicação e a consistência.
 ## Como testar (resumo)
 
 ```
+bdd 8.0   # (OPCIONAL, todas) para o MySQL Cluster e libera RAM (só se reaproveitar essas VMs)
 bdd 8.1   # (todas) rede + hostname node1/2/3
 bdd 8.2   # (todas, node1 primeiro) cassandra.yaml + sobe o serviço
 bdd 8.3   # (node1) nodetool status: 3 nós UN
