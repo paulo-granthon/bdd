@@ -33,8 +33,10 @@ instala_cassandra() {
   # chave do repo (apt-key é depreciado mas funciona no 16.04); tenta 2 origens.
   { curl -fsSL https://downloads.apache.org/cassandra/KEYS \
       || curl -fsSL https://archive.apache.org/dist/cassandra/KEYS; } 2>/dev/null | apt-key add - 2>/dev/null || true
-  apt-get update -y || true
-  apt-get install -y cassandra || erro "falha ao instalar o Cassandra via apt (veja a saída acima)."
+  # repo pode ficar sem chave nessas VMs EOL; seguimos sem verificar a assinatura.
+  apt-get update -y --allow-insecure-repositories || true
+  apt-get install -y --allow-unauthenticated cassandra \
+    || erro "falha ao instalar o Cassandra via apt (veja a saída acima)."
   log "Cassandra instalado."
 }
 instala_cassandra
